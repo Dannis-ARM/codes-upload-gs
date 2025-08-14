@@ -1,4 +1,4 @@
 git add .
 git cmm "feat: tmp"
-git push origin dev
+git push
 
