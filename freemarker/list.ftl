@@ -3,3 +3,9 @@ python my_script.py --users <#-- Loop through the list and print each item separ
 <#list users as user>
     "${user}"<#-- Add a space after each item -->
 <#if user_has_next> </#if></#list>
+
+
+<#-- 构建命令行参数字符串 -->
+<#assign argString = cliArgs?join(" ")>
+
+your-cli-tool ${argString}
