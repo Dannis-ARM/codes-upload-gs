@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"sync" // Import sync package for WaitGroup
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,7 +51,7 @@ var (
 			Name: "api_response_seconds",
 			Help: "API response time in seconds",
 		},
-		[]string{"vpce_health_status_latency"},
+		[]string{"probe_resp_latency"},
 	)
 )
 
@@ -68,7 +69,7 @@ func probeAPI(api API) {
 	if err != nil {
 		fmt.Printf("  -> FAILED to create request, error: %v\n", err)
 		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"vpce_health_status_latency": api.Name}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(0)
 		return
 	}
 
@@ -79,7 +80,7 @@ func probeAPI(api API) {
 	if err != nil {
 		fmt.Printf("  -> FAILED, error: %v\n", err)
 		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"vpce_health_status_latency": api.Name}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(0)
 		return
 	}
 	defer resp.Body.Close()
@@ -93,7 +94,7 @@ func probeAPI(api API) {
 	}
 
 	// Record response time regardless of success or failure
-	apiLatencyGauge.With(prometheus.Labels{"vpce_health_status_latency": api.Name}).Set(latency)
+	apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(latency)
 }
 
 // 3. Main program entry point
@@ -119,9 +120,13 @@ func main() {
 	// Start a goroutine to periodically probe APIs
 	go func() {
 		for {
+			var wg sync.WaitGroup
 			for _, api := range targetAPIs {
-				probeAPI(api)
+				wg.Add(1)
+				go probeSingleAPI(api, &wg)
 			}
+			wg.Wait() // Wait for all probes to complete
+
 			// Wait for 60 seconds before the next probe
 			fmt.Println("Waiting for 60 seconds...")
 			time.Sleep(60 * time.Second)
@@ -133,4 +138,10 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	fmt.Println("Prometheus metrics server started on http://localhost:8000")
 	http.ListenAndServe(":8000", nil)
+}
+
+// probeSingleAPI is a helper function to probe a single API in a goroutine.
+func probeSingleAPI(api API, wg *sync.WaitGroup) {
+	defer wg.Done()
+	probeAPI(api)
 }
