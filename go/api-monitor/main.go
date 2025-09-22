@@ -12,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const apiTimeout = 10 * time.Second // Define a constant for API timeout
+var apiTimeout = 10 * time.Second // Define a variable for API timeout, default to 10 seconds
 
 // Define the list of APIs to monitor
 type API struct {
@@ -42,7 +42,7 @@ var (
 			Name: "api_availability_status",
 			Help: "API availability status (1 for up, 0 for down)",
 		},
-		[]string{"vpce_health_status"}, // Use labels to differentiate between different APIs
+		[]string{"api_name"}, // Use labels to differentiate between different APIs
 	)
 
 	// Use Gauge to record API response time
@@ -51,7 +51,7 @@ var (
 			Name: "api_response_seconds",
 			Help: "API response time in seconds",
 		},
-		[]string{"probe_resp_latency"},
+		[]string{"api_name"},
 	)
 )
 
@@ -68,8 +68,8 @@ func probeAPI(api API) {
 	req, err := http.NewRequestWithContext(ctx, "GET", api.URL, nil)
 	if err != nil {
 		fmt.Printf("  -> FAILED to create request, error: %v\n", err)
-		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(0)
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
 		return
 	}
 
@@ -79,28 +79,29 @@ func probeAPI(api API) {
 
 	if err != nil {
 		fmt.Printf("  -> FAILED, error: %v\n", err)
-		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(0)
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
 		fmt.Printf("  -> SUCCESS, response time: %.2fs\n", latency)
-		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(1)
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(1)
 	} else {
 		fmt.Printf("  -> FAILED, status code: %d\n", resp.StatusCode)
-		apiStatusGauge.With(prometheus.Labels{"vpce_health_status": api.Name}).Set(0)
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
 	}
 
 	// Record response time regardless of success or failure
-	apiLatencyGauge.With(prometheus.Labels{"probe_resp_latency": api.Name}).Set(latency)
+	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(latency)
 }
 
 // 3. Main program entry point
 func main() {
 	var urls apiURLs
 	flag.Var(&urls, "url", "URL to monitor (can be specified multiple times)")
+	flag.DurationVar(&apiTimeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
 	flag.Parse()
 
 	if len(urls) == 0 {
