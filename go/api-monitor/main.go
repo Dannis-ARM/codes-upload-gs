@@ -4,7 +4,9 @@ import (
 	"context" // Import context package for timeout
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
+	"os"   // Import os package for log output
 	"sync" // Import sync package for WaitGroup
 	"time"
 
@@ -13,7 +15,7 @@ import (
 )
 
 var apiTimeout = 10 * time.Second // Define a variable for API timeout, default to 10 seconds
-var apiProbeInterval = 30 * time.Second // Default sleep duration
+var apiProbeInterval = 60 * time.Second // Default sleep duration
 
 // Define the list of APIs to monitor
 type API struct {
@@ -56,9 +58,31 @@ var (
 	)
 )
 
+var (
+	infoLogger  *log.Logger
+	errorLogger *log.Logger
+)
+
+const (
+	logLevelInfo  = "INFO"
+	logLevelError = "ERROR"
+)
+
+// fmtLog formats the log message with ISO time and calls the appropriate logger.
+func fmtLog(level string, format string, args ...interface{}) {
+	timestamp := time.Now().Format(time.RFC3339) // ISO 8601 format
+	message := fmt.Sprintf(format, args...)
+	switch level {
+	case logLevelInfo:
+		infoLogger.Printf("%s - %s", timestamp, message)
+	case logLevelError:
+		errorLogger.Printf("%s - %s", timestamp, message)
+	}
+}
+
 // 2. Define the probe function
 func probeAPI(api API) {
-	fmt.Printf("Probing %s at %s...\n", api.Name, api.URL)
+	fmtLog(logLevelInfo, "Probing %s at %s...", api.Name, api.URL)
 	start := time.Now()
 
 	// Create a context with a timeout
@@ -68,7 +92,7 @@ func probeAPI(api API) {
 	// Create an HTTP client with the context
 	req, err := http.NewRequestWithContext(ctx, "GET", api.URL, nil)
 	if err != nil {
-		fmt.Printf("  -> FAILED to create request, error: %v\n", err)
+		fmtLog(logLevelError, "  -> FAILED to create request, error: %v", err)
 		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
 		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
 		return
@@ -79,7 +103,7 @@ func probeAPI(api API) {
 	latency := time.Since(start).Seconds()
 
 	if err != nil {
-		fmt.Printf("  -> FAILED, error: %v\n", err)
+		fmtLog(logLevelError, "  -> FAILED, error: %v", err)
 		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
 		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
 		return
@@ -87,10 +111,10 @@ func probeAPI(api API) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		fmt.Printf("  -> SUCCESS, response time: %.2fs\n", latency)
+		fmtLog(logLevelInfo, "  -> SUCCESS, response time: %.2fs", latency)
 		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(1)
 	} else {
-		fmt.Printf("  -> FAILED, status code: %d\n", resp.StatusCode)
+		fmtLog(logLevelError, "  -> FAILED, status code: %d", resp.StatusCode)
 		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
 	}
 
@@ -106,8 +130,11 @@ func main() {
 	flag.DurationVar(&apiProbeInterval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
 	flag.Parse()
 
+	infoLogger = log.New(os.Stdout, "[INFO]  ", log.Lshortfile)
+	errorLogger = log.New(os.Stdout, "[ERROR] ", log.Lshortfile)
+
 	if len(urls) == 0 {
-		fmt.Println("No URLs provided to monitor. Use -url flag (e.g., -url https://www.baidu.com -url https://another-api.com/health)")
+		fmtLog(logLevelError, "No URLs provided to monitor. Use -url flag (e.g., -url https://www.baidu.com -url https://another-api.com/health)")
 		return
 	}
 
@@ -131,7 +158,7 @@ func main() {
 			wg.Wait() // Wait for all probes to complete
 
 			// Wait for the specified sleep duration before the next probe
-			fmt.Printf("Waiting for %v before the next probe...\n", apiProbeInterval)
+			fmtLog(logLevelInfo, "Waiting for %v before the next probe...", apiProbeInterval)
 			time.Sleep(apiProbeInterval)
 		}
 	}()
@@ -139,7 +166,7 @@ func main() {
 	// Start an HTTP server on port 8000 to expose metrics
 	// This is the endpoint Prometheus will scrape
 	http.Handle("/metrics", promhttp.Handler())
-	fmt.Println("Prometheus metrics server started on http://localhost:8000")
+	fmtLog(logLevelInfo, "Prometheus metrics server started on http://localhost:8000")
 	http.ListenAndServe(":8000", nil)
 }
 
