@@ -13,6 +13,7 @@ import (
 )
 
 var apiTimeout = 10 * time.Second // Define a variable for API timeout, default to 10 seconds
+var apiProbeInterval = 30 * time.Second // Default sleep duration
 
 // Define the list of APIs to monitor
 type API struct {
@@ -102,6 +103,7 @@ func main() {
 	var urls apiURLs
 	flag.Var(&urls, "url", "URL to monitor (can be specified multiple times)")
 	flag.DurationVar(&apiTimeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
+	flag.DurationVar(&apiProbeInterval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
 	flag.Parse()
 
 	if len(urls) == 0 {
@@ -128,9 +130,9 @@ func main() {
 			}
 			wg.Wait() // Wait for all probes to complete
 
-			// Wait for 60 seconds before the next probe
-			fmt.Println("Waiting for 60 seconds...")
-			time.Sleep(60 * time.Second)
+			// Wait for the specified sleep duration before the next probe
+			fmt.Printf("Waiting for %v before the next probe...\n", apiProbeInterval)
+			time.Sleep(apiProbeInterval)
 		}
 	}()
 
