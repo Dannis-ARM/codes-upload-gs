@@ -116,13 +116,10 @@ func probeAPI(api API) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		fmtLog(logLevelInfo, "  -> SUCCESS, response time: %.2fs", latency)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(1)
-	} else {
-		fmtLog(logLevelError, "  -> FAILED, status code: %d", resp.StatusCode)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
-	}
+	// If we reached here, it means 'err' was nil, so TLS connection was successful.
+	// The user only cares about TLS connection success, not HTTP status code.
+	fmtLog(logLevelInfo, "  -> SUCCESS (TLS connected), response time: %.2fs", latency)
+	apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(1)
 
 	// Record response time regardless of success or failure
 	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(latency)
