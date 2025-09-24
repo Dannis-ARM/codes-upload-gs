@@ -109,6 +109,9 @@ func probeAPI(api API) {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	resp, err := client.Do(req)
 	latency := time.Since(start).Seconds()
