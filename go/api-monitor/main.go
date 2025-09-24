@@ -2,6 +2,7 @@ package main
 
 import (
 	"context" // Import context package for timeout
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -104,7 +105,11 @@ func probeAPI(api API) {
 		return
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	resp, err := client.Do(req)
 	latency := time.Since(start).Seconds()
 
