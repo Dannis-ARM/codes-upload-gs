@@ -10,17 +10,23 @@ import (
 	"sync" // Import sync package for WaitGroup
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var apiTimeout = 10 * time.Second // Define a variable for API timeout, default to 10 seconds
+var apiTimeout = 10 * time.Second       // Define a variable for API timeout, default to 10 seconds
 var apiProbeInterval = 60 * time.Second // Default sleep duration
 
 // Define the list of APIs to monitor
 type API struct {
-	Name string
-	URL  string
+	Name string `yaml:"name,omitempty"` // Add yaml tags for unmarshaling
+	URL  string `yaml:"url"`
+}
+
+// YAMLConfig defines the structure of the YAML configuration file
+type YAMLConfig struct {
+	MonitorAPIs []API `yaml:"monitor_apis"`
 }
 
 // Custom flag type for multiple URLs
@@ -123,24 +129,85 @@ func probeAPI(api API) {
 }
 
 // 3. Main program entry point
-func main() {
+// loadYAMLConfig loads API configurations from a YAML file.
+func loadYAMLConfig(filePath string) ([]API, error) {
+	// Resolve file path: if it's just a filename, look in the current working directory
+	if !isAbsolutePath(filePath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current working directory: %w", err)
+		}
+		filePath = fmt.Sprintf("%s%c%s", cwd, os.PathSeparator, filePath)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read YAML file %s: %w", filePath, err)
+	}
+
+	var config YAMLConfig
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal YAML data from %s: %w", filePath, err)
+	}
+
+	// Assign default names if not provided in YAML
+	for i := range config.MonitorAPIs {
+		if config.MonitorAPIs[i].Name == "" {
+			config.MonitorAPIs[i].Name = fmt.Sprintf("api_yaml_%d", i+1)
+		}
+	}
+
+	return config.MonitorAPIs, nil
+}
+
+// isAbsolutePath checks if a given path is an absolute path.
+func isAbsolutePath(path string) bool {
+	return os.IsPathSeparator(path[0]) || (len(path) > 1 && path[1] == ':') // For Windows paths like C:\
+}
+
+// parseArgsAndLoadConfig handles CLI argument parsing and configuration loading.
+func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, error) {
 	var urls apiURLs
+	var yamlConfigPath string
+	var timeout time.Duration
+	var interval time.Duration
+
 	flag.Var(&urls, "url", "URL to monitor (can be specified multiple times)")
-	flag.DurationVar(&apiTimeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
-	flag.DurationVar(&apiProbeInterval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
+	flag.StringVar(&yamlConfigPath, "yaml", "", "Path to a YAML configuration file for APIs")
+	flag.DurationVar(&timeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
+	flag.DurationVar(&interval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
 	flag.Parse()
 
+	var apis []API
+	if yamlConfigPath != "" {
+		yamlAPIs, err := loadYAMLConfig(yamlConfigPath)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("error loading YAML config: %w", err)
+		}
+		apis = append(apis, yamlAPIs...)
+	} else {
+		for i, u := range urls {
+			apis = append(apis, API{Name: fmt.Sprintf("api_cmd_%d", i+1), URL: u})
+		}
+	}
+
+	if len(apis) == 0 {
+		return nil, 0, 0, fmt.Errorf("no URLs provided to monitor. Use -url flag or -yaml flag")
+	}
+
+	return apis, timeout, interval, nil
+}
+
+func main() {
 	infoLogger = log.New(os.Stdout, "[INFO]  ", log.Lshortfile)
 	errorLogger = log.New(os.Stdout, "[ERROR] ", log.Lshortfile)
 
-	if len(urls) == 0 {
-		fmtLog(logLevelError, "No URLs provided to monitor. Use -url flag (e.g., -url https://www.baidu.com -url https://another-api.com/health)")
+	var err error
+	targetAPIs, apiTimeout, apiProbeInterval, err = parseArgsAndLoadConfig()
+	if err != nil {
+		fmtLog(logLevelError, "%v", err)
 		return
-	}
-
-	// Populate targetAPIs from the parsed URLs
-	for i, u := range urls {
-		targetAPIs = append(targetAPIs, API{Name: fmt.Sprintf("api_%d", i+1), URL: u})
 	}
 
 	// Register metrics
