@@ -44,6 +44,7 @@ func (i *apiURLs) Set(value string) error {
 
 var (
 	targetAPIs []API
+	currentEnv string // Global variable to store the environment (dev/prod)
 
 	// 1. Define Prometheus metrics
 	// Use Gauge metric, 1 for success, 0 for failure
@@ -172,23 +173,25 @@ func isAbsolutePath(path string) bool {
 }
 
 // parseArgsAndLoadConfig handles CLI argument parsing and configuration loading.
-func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, error) {
+func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, string, error) {
 	var urls apiURLs
 	var yamlConfigPath string
 	var timeout time.Duration
 	var interval time.Duration
+	var env string // Local variable for the flag
 
 	flag.Var(&urls, "url", "URL to monitor (can be specified multiple times)")
 	flag.StringVar(&yamlConfigPath, "yaml", "", "Path to a YAML configuration file for APIs")
 	flag.DurationVar(&timeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
 	flag.DurationVar(&interval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
+	flag.StringVar(&env, "env", "dev", "Environment for monitoring (e.g., dev, prod). Defaults to 'dev'.") // New flag
 	flag.Parse()
 
 	var apis []API
 	if yamlConfigPath != "" {
 		yamlAPIs, err := loadYAMLConfig(yamlConfigPath)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("error loading YAML config: %w", err)
+			return nil, 0, 0, "", fmt.Errorf("error loading YAML config: %w", err)
 		}
 		apis = append(apis, yamlAPIs...)
 	} else {
@@ -198,10 +201,10 @@ func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, error) {
 	}
 
 	if len(apis) == 0 {
-		return nil, 0, 0, fmt.Errorf("no URLs provided to monitor. Use -url flag or -yaml flag")
+		return nil, 0, 0, "", fmt.Errorf("no URLs provided to monitor. Use -url flag or -yaml flag")
 	}
 
-	return apis, timeout, interval, nil
+	return apis, timeout, interval, env, nil
 }
 
 func main() {
@@ -209,11 +212,15 @@ func main() {
 	errorLogger = log.New(os.Stdout, "[ERROR] ", log.Lshortfile)
 
 	var err error
-	targetAPIs, apiTimeout, apiProbeInterval, err = parseArgsAndLoadConfig()
+	var env string // Declare env here
+	targetAPIs, apiTimeout, apiProbeInterval, env, err = parseArgsAndLoadConfig() // Receive env
 	if err != nil {
 		fmtLog(logLevelError, "%v", err)
 		return
 	}
+
+	currentEnv = env // Assign to global variable
+	fmtLog(logLevelInfo, "Monitoring environment: %s", currentEnv) // Log the environment
 
 	// Register metrics
 	prometheus.MustRegister(apiStatusGauge)
