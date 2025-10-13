@@ -53,7 +53,7 @@ var (
 			Name: "api_availability_status",
 			Help: "API availability status (1 for up, 0 for down)",
 		},
-		[]string{"api_name"}, // Use labels to differentiate between different APIs
+		[]string{"api_name", "env"}, // Use labels to differentiate between different APIs and environments
 	)
 
 	// Use Gauge to record API response time
@@ -62,7 +62,7 @@ var (
 			Name: "api_response_seconds",
 			Help: "API response time in seconds",
 		},
-		[]string{"api_name"},
+		[]string{"api_name", "env"}, // Use labels to differentiate between different APIs and environments
 	)
 )
 
@@ -101,8 +101,8 @@ func probeAPI(api API) {
 	req, err := http.NewRequestWithContext(ctx, "GET", api.URL, nil)
 	if err != nil {
 		fmtLog(logLevelError, "  -> FAILED to create request, error: %v", err)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
 		return
 	}
 
@@ -119,8 +119,8 @@ func probeAPI(api API) {
 
 	if err != nil {
 		fmtLog(logLevelError, "  -> FAILED, error: %v", err)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
 		return
 	}
 	defer resp.Body.Close()
@@ -128,10 +128,10 @@ func probeAPI(api API) {
 	// If we reached here, it means 'err' was nil, so TLS connection was successful.
 	// The user only cares about TLS connection success, not HTTP status code.
 	fmtLog(logLevelInfo, "  -> SUCCESS (TLS connected), response time: %.2fs", latency)
-	apiStatusGauge.With(prometheus.Labels{"api_name": api.Name}).Set(1)
+	apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(1)
 
 	// Record response time regardless of success or failure
-	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name}).Set(latency)
+	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(latency)
 }
 
 // 3. Main program entry point
