@@ -1,4 +1,4 @@
-package main
+\package main
 
 import (
 	"context" // Import context package for timeout
@@ -23,6 +23,7 @@ var apiProbeInterval = 60 * time.Second // Default sleep duration
 type API struct {
 	Name string `yaml:"name,omitempty"` // Add yaml tags for unmarshaling
 	URL  string `yaml:"url"`
+	Region string `yaml:"region,omitempty"`
 }
 
 // YAMLConfig defines the structure of the YAML configuration file
@@ -53,7 +54,7 @@ var (
 			Name: "api_availability_status",
 			Help: "API availability status (1 for up, 0 for down)",
 		},
-		[]string{"api_name", "env"}, // Use labels to differentiate between different APIs and environments
+		[]string{"api_name", "env", "region"}, // Use labels to differentiate between different APIs, environments and regions
 	)
 
 	// Use Gauge to record API response time
@@ -62,7 +63,7 @@ var (
 			Name: "api_response_seconds",
 			Help: "API response time in seconds",
 		},
-		[]string{"api_name", "env"}, // Use labels to differentiate between different APIs and environments
+		[]string{"api_name", "env", "region"}, // Use labels to differentiate between different APIs, environments and regions
 	)
 )
 
@@ -101,8 +102,8 @@ func probeAPI(api API) {
 	req, err := http.NewRequestWithContext(ctx, "GET", api.URL, nil)
 	if err != nil {
 		fmtLog(logLevelError, "  -> FAILED to create request, error: %v", err)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(apiTimeout.Seconds()) // Set latency to timeout on request creation failure
 		return
 	}
 
@@ -119,8 +120,8 @@ func probeAPI(api API) {
 
 	if err != nil {
 		fmtLog(logLevelError, "  -> FAILED, error: %v", err)
-		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(0)
-		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
+		apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(0)
+		apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(apiTimeout.Seconds()) // Set latency to timeout on HTTP request failure
 		return
 	}
 	defer resp.Body.Close()
@@ -128,10 +129,10 @@ func probeAPI(api API) {
 	// If we reached here, it means 'err' was nil, so TLS connection was successful.
 	// The user only cares about TLS connection success, not HTTP status code.
 	fmtLog(logLevelInfo, "  -> SUCCESS (TLS connected), response time: %.2fs", latency)
-	apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(1)
+	apiStatusGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(1)
 
 	// Record response time regardless of success or failure
-	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv}).Set(latency)
+	apiLatencyGauge.With(prometheus.Labels{"api_name": api.Name, "env": currentEnv, "region": api.Region}).Set(latency)
 }
 
 // 3. Main program entry point
@@ -162,6 +163,9 @@ func loadYAMLConfig(filePath string) ([]API, error) {
 		if config.MonitorAPIs[i].Name == "" {
 			config.MonitorAPIs[i].Name = fmt.Sprintf("api_yaml_%d", i+1)
 		}
+		if config.MonitorAPIs[i].Region == "" {
+			config.MonitorAPIs[i].Region = "" // leave empty to be filled by default region flag later
+		}
 	}
 
 	return config.MonitorAPIs, nil
@@ -179,12 +183,14 @@ func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, string, erro
 	var timeout time.Duration
 	var interval time.Duration
 	var env string // Local variable for the flag
+	var defaultRegion string
 
 	flag.Var(&urls, "url", "URL to monitor (can be specified multiple times)")
 	flag.StringVar(&yamlConfigPath, "yaml", "", "Path to a YAML configuration file for APIs")
 	flag.DurationVar(&timeout, "timeout", apiTimeout, "Timeout for API probes (e.g., 5s, 1m). Defaults to 10s if not provided.")
 	flag.DurationVar(&interval, "interval", apiProbeInterval, "Interval between API probes (e.g., 30s, 1m). Defaults to 30s if not provided.")
 	flag.StringVar(&env, "env", "dev", "Environment for monitoring (e.g., dev, prod). Defaults to 'dev'.") // New flag
+	flag.StringVar(&defaultRegion, "region", "", "Default region label to apply to APIs that don't specify region in YAML. Can be overridden per-API in YAML.")
 	flag.Parse()
 
 	var apis []API
@@ -193,10 +199,16 @@ func parseArgsAndLoadConfig() ([]API, time.Duration, time.Duration, string, erro
 		if err != nil {
 			return nil, 0, 0, "", fmt.Errorf("error loading YAML config: %w", err)
 		}
+		// If an API in YAML doesn't have region set, apply defaultRegion
+		for i := range yamlAPIs {
+			if yamlAPIs[i].Region == "" {
+				yamlAPIs[i].Region = defaultRegion
+			}
+		}
 		apis = append(apis, yamlAPIs...)
 	} else {
 		for i, u := range urls {
-			apis = append(apis, API{Name: fmt.Sprintf("api_cmd_%d", i+1), URL: u})
+			apis = append(apis, API{Name: fmt.Sprintf("api_cmd_%d", i+1), URL: u, Region: defaultRegion})
 		}
 	}
 
