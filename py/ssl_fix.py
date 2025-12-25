@@ -24,3 +24,23 @@ s3 = boto3.client('s3', region_name='your-region')
 
 # 测试连接
 # response = s3.list_buckets()
+
+### ???
+
+import urllib3
+import boto3
+
+# 核心步骤：修改 urllib3 默认使用的加密套件字符串
+# 在末尾添加 :@SECLEVEL=1 来允许较小的密钥
+urllib3.util.ssl_.DEFAULT_CIPHERS += ':@SECLEVEL=1'
+
+# 也可以直接禁用 DH 算法（绕过 DH 密钥太小的问题）：
+# urllib3.util.ssl_.DEFAULT_CIPHERS += ':!DH'
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url='你的_endpoint',
+    aws_access_key_id='...',
+    aws_secret_access_key='...',
+    verify=False  # 解决自签名证书报错
+)
