@@ -1,5 +1,0 @@
-vpces:
-  - region: cn-north-1
-    subnets:
-      - subnet-1
-      - subnet-2
