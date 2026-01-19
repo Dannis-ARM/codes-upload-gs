@@ -4,12 +4,13 @@
 # and deploying the CloudFormation stack.
 #
 # Usage:
-#   ./deploy.sh <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <security-group-id> <subnet-ids>
+#   ./deploy.sh <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>
 #
 # Arguments:
 #   s3-bucket-name: The name of the S3 bucket to upload the Lambda code to.
 #   update-worker-arn: The ARN of the worker Lambda for updating records (e.g., arn:aws-cn:lambda:...)
 #   fetch-worker-arn: The ARN of the worker Lambda for fetching records (e.g., arn:aws-cn:lambda:...)
+#   vpc-id: The ID of the VPC for the private API endpoint.
 #   security-group-id: The Security Group ID for the Lambda function.
 #   subnet-ids: A comma-separated list of Subnet IDs for the Lambda function (e.g., "subnet-123,subnet-456").
 
@@ -22,8 +23,9 @@ TEMPLATE_FILE="template.yaml"
 S3_BUCKET="$1"
 UPDATE_WORKER_ARN="$2"
 FETCH_WORKER_ARN="$3"
-SECURITY_GROUP_ID="$4"
-SUBNET_IDS="$5"
+VPC_ID="$4"
+SECURITY_GROUP_ID="$5"
+SUBNET_IDS="$6"
 
 # The name of the zip file that will be created and uploaded
 ZIP_FILE="main.py.zip"
@@ -31,9 +33,42 @@ ZIP_FILE="main.py.zip"
 S3_KEY="lambda-code/$ZIP_FILE"
 
 # --- Validate Input ---
-if [ -z "$S3_BUCKET" ] || [ -z "$UPDATE_WORKER_ARN" ] || [ -z "$FETCH_WORKER_ARN" ] || [ -z "$SECURITY_GROUP_ID" ] || [ -z "$SUBNET_IDS" ]; then
-  echo "Usage: $0 <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <security-group-id> <subnet-ids>"
+if [ -z "$S3_BUCKET" ] || [ -z "$UPDATE_WORKER_ARN" ] || [ -z "$FETCH_WORKER_ARN" ] || [ -z "$VPC_ID" ] || [ -z "$SECURITY_GROUP_ID" ] || [ -z "$SUBNET_IDS" ]; then
+  echo "Usage: $0 <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>"
   echo "Please provide all required arguments."
+  exit 1
+fi
+
+# --- Wait for Worker Lambdas ---
+echo "Checking for existence of worker Lambdas..."
+WORKER_ARNS=("$UPDATE_WORKER_ARN" "$FETCH_WORKER_ARN")
+MAX_WAIT_SECONDS=300 # 5 minutes
+SECONDS=0 # Reset the timer
+
+while [ $SECONDS -lt $MAX_WAIT_SECONDS ]; do
+  all_found=true
+  for arn in "${WORKER_ARNS[@]}"; do
+    echo "Checking for $arn..."
+    if ! aws lambda get-function --function-name "$arn" > /dev/null 2>&1; then
+      echo "Worker Lambda $arn not found yet."
+      all_found=false
+      break # Exit the inner for-loop
+    else
+      echo "Worker Lambda $arn found."
+    fi
+  done
+
+  if [ "$all_found" = true ]; then
+    echo "All worker Lambdas found."
+    break # Exit the while-loop
+  fi
+
+  echo "Waiting 10 seconds before retrying..."
+  sleep 10
+done
+
+if [ "$all_found" = false ]; then
+  echo "Timeout: One or more worker Lambdas were not found after $MAX_WAIT_SECONDS seconds."
   exit 1
 fi
 
@@ -60,8 +95,9 @@ aws cloudformation deploy \
     CodeS3Key=$S3_KEY \
     UpdateWorkerLambdaArn=$UPDATE_WORKER_ARN \
     FetchWorkerLambdaArn=$FETCH_WORKER_ARN \
+    VpcId=$VPC_ID \
     SecurityGroupId=$SECURITY_GROUP_ID \
-    SubnetIds="\"$SUBNET_IDS\""
+    SubnetIds="""$SUBNET_IDS"""
 
 echo "Deployment complete."
 
