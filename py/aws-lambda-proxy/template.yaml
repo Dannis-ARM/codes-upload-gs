@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Deploys a secure Lambda proxy that uses IAM to authorize and route
+  requests from different roles (RoleA, RoleB) to specific actions.
+
+Parameters:
+  LambdaFunctionName:
+    Type: String
+    Default: 'ActionHandlerLambda'
+    Description: 'Name for the central handler Lambda function.'
+  UpdateWorkerLambdaArn:
+    Type: String
+    Description: "The ARN of the pre-existing worker Lambda for updating records."
+  FetchWorkerLambdaArn:
+    Type: String
+    Description: "The ARN of the pre-existing worker Lambda for fetching records."
+  CodeS3Bucket:
+    Type: String
+    Description: "The S3 bucket containing the zipped Lambda code."
+  CodeS3Key:
+    Type: String
+    Description: "The S3 key for the zipped Lambda code."
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: "The Security Group ID for the Lambda function."
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: "A list of Subnet IDs for the Lambda function."
+
+Resources:
+  # ----------------------------------------------------------------
+  #   CALLER IAM ROLES (Clients)
+  #   These roles represent the clients/services calling your Lambda.
+  # ----------------------------------------------------------------
+  RoleA:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'RoleA'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root' # Allow root user in account to assume this role
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeActionHandlerLambdaPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:InvokeFunctionUrl'
+                Resource: !GetAtt LambdaFunctionUrl.FunctionUrl # Grant invoke on the Function URL
+
+  RoleB:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'RoleB'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeActionHandlerLambdaPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:InvokeFunctionUrl'
+                Resource: !GetAtt LambdaFunctionUrl.FunctionUrl # Grant invoke on the Function URL
+
+  # ----------------------------------------------------------------
+  #   LAMBDA FUNCTION AND EXECUTION ROLE
+  # ----------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${LambdaFunctionName}-ExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole' # For CloudWatch Logs
+        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'InvokeWorkerLambdasPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:InvokeFunction'
+                Resource:
+                  - !Ref UpdateWorkerLambdaArn
+                  - !Ref FetchWorkerLambdaArn
+
+  ActionHandlerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: main.lambda_handler
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        SubnetIds: !Ref SubnetIds
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Timeout: 10
+      Environment:
+        Variables:
+          UPDATE_WORKER_LAMBDA_NAME: !Ref UpdateWorkerLambdaArn
+          FETCH_WORKER_LAMBDA_NAME: !Ref FetchWorkerLambdaArn
+
+  # ----------------------------------------------------------------
+  #   LAMBDA FUNCTION URL AND PERMISSIONS
+  # ----------------------------------------------------------------
+  LambdaFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref ActionHandlerLambda
+      AuthType: AWS_IAM
+
+  LambdaInvokePermissionA:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ActionHandlerLambda
+      Action: lambda:InvokeFunctionUrl
+      Principal: !GetAtt RoleA.Arn
+      FunctionUrlAuthType: AWS_IAM
+
+  LambdaInvokePermissionB:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ActionHandlerLambda
+      Action: lambda:InvokeFunctionUrl
+      Principal: !GetAtt RoleB.Arn
+      FunctionUrlAuthType: AWS_IAM
+
+Outputs:
+  LambdaFunctionUrl:
+    Description: "The URL of the Lambda function."
+    Value: !GetAtt LambdaFunctionUrl.FunctionUrl
+  RoleAToAssume:
+    Description: "ARN of RoleA to assume for testing."
+    Value: !GetAtt RoleA.Arn
+  RoleBToAssume:
+    Description: "ARN of RoleB to assume for testing."
+    Value: !GetAtt RoleB.Arn
