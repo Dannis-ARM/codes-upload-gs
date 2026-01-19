@@ -25,8 +25,8 @@ FETCH_WORKER_LAMBDA_ARN = os.environ.get("FETCH_WORKER_LAMBDA_NAME")
 # --- Authorization Mapping ---
 # Defines the permission level for each role.
 ROLE_PERMISSIONS: Dict[str, str] = {
-    "RoleA": "read-write",
-    "RoleB": "read-only",
+    "UpdateRole": "read-write",
+    "FetchRole": "read-only",
 }
 
 # Defines the permission level required for each action.
@@ -93,13 +93,14 @@ def lambda_handler(event: Dict[str, Any], context: object) -> Dict[str, Any]:
         logger.error("Worker Lambda ARNs not configured. Ensure UPDATE_WORKER_LAMBDA_NAME and FETCH_WORKER_LAMBDA_NAME environment variables are set.")
         return {
             "statusCode": 500,
-            "body": json.dumps({"message": "Internal Server Error: Worker Lambda ARNs not configured."})
+            "message": "Internal Server Error: Worker Lambda ARNs not configured.",
+            "payload": {}
         }
 
     try:
         # 1. Extract Caller Identity from the request context
-        # When using IAM auth, Lambda populates this path with the caller's identity.
-        caller_arn: str = event["requestContext"]["authorizer"]["iam"]["arn"]
+        # When invoked via API Gateway with IAM auth, the caller's identity is in this path.
+        caller_arn: str = event["requestContext"]["identity"]["userArn"]
         
         # Extract the role name (e.g., "RoleA") from the full ARN
         # Assumes ARN format: arn:aws:sts::123456789012:assumed-role/RoleA/session-name
@@ -112,7 +113,8 @@ def lambda_handler(event: Dict[str, Any], context: object) -> Dict[str, Any]:
         if not requested_action:
             return {
                 "statusCode": 400,
-                "body": json.dumps({"message": "Bad Request: 'action' is required in the request body."})
+                "message": "Bad Request: 'action' is required in the request body.",
+                "payload": {}
             }
 
         # 3. Perform Authorization (The Gatekeeper Logic)
@@ -136,7 +138,8 @@ def lambda_handler(event: Dict[str, Any], context: object) -> Dict[str, Any]:
                 )
             return {
                 "statusCode": 403,
-                "body": json.dumps({"message": "Forbidden"})
+                "message": "Forbidden",
+                "payload": {}
             }
 
         logger.info(
@@ -153,33 +156,34 @@ def lambda_handler(event: Dict[str, Any], context: object) -> Dict[str, Any]:
         else:
             raise ValueError(f"Unknown action: {requested_action}")
 
-        return {
-            "statusCode": 200,
-            "body": json.dumps(result)
-        }
+        return result
 
     except (KeyError, TypeError) as e:
         logger.error("Error processing request context. Is the authenticator configured correctly? %s", e)
         return {
             "statusCode": 400,
-            "body": json.dumps({"message": "Bad Request: Invalid request structure."})
+            "message": "Bad Request: Invalid request structure.",
+            "payload": {}
         }
     except json.JSONDecodeError:
         return {
             "statusCode": 400,
-            "body": json.dumps({"message": "Bad Request: Invalid JSON in body."})
+            "message": "Bad Request: Invalid JSON in body.",
+            "payload": {}
         }
     except RuntimeError as e:
         logger.error("Worker Lambda invocation error: %s", e)
         return {
             "statusCode": 502, # Bad Gateway for issues with upstream service
-            "body": json.dumps({"message": str(e)})
+            "message": str(e),
+            "payload": {}
         }
     except Exception as e:
         logger.exception("An unexpected error occurred: %s", e)
         return {
             "statusCode": 500,
-            "body": json.dumps({"message": "Internal Server Error"})
+            "message": "Internal Server Error",
+            "payload": {}
         }
 
 # --- Business Logic Handlers ---
@@ -197,9 +201,10 @@ def _handle_update_record(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     # Invoke the worker Lambda
+    assert UPDATE_WORKER_LAMBDA_ARN
     worker_response = _invoke_worker(UPDATE_WORKER_LAMBDA_ARN, worker_event)
     return {
-        "code": 200,
+        "statusCode": 200,
         "message": "Update request processed successfully.",
         "payload": worker_response
     }
@@ -219,9 +224,10 @@ def _handle_fetch_record(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # Invoke the worker Lambda
+    assert FETCH_WORKER_LAMBDA_ARN
     worker_response = _invoke_worker(FETCH_WORKER_LAMBDA_ARN, worker_event)
     return {
-        "code": 200,
+        "statusCode": 200,
         "message": "Fetch request processed successfully.",
         "payload": worker_response
     }

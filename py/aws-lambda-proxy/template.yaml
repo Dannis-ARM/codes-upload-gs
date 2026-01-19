@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Deploys a secure Lambda proxy that uses IAM to authorize and route
-  requests from different roles (RoleA, RoleB) to specific actions.
+  Deploys a secure Lambda proxy behind a private API Gateway. The proxy uses
+  IAM to authorize and route requests from different roles (UpdateRole, FetchRole)
+  to specific actions.
 
 Parameters:
   LambdaFunctionName:
@@ -20,57 +21,61 @@ Parameters:
   CodeS3Key:
     Type: String
     Description: "The S3 key for the zipped Lambda code."
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "The ID of the VPC for the private API endpoint."
   SecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
-    Description: "The Security Group ID for the Lambda function."
+    Description: "The Security Group ID for the Lambda function and VPC Endpoint."
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: "A list of Subnet IDs for the Lambda function."
+    Description: "A list of Subnet IDs for the Lambda function and VPC Endpoint."
 
 Resources:
   # ----------------------------------------------------------------
-  #   CALLER IAM ROLES (Clients)
-  #   These roles represent the clients/services calling your Lambda.
+  #   VPC ENDPOINT FOR PRIVATE API GATEWAY
   # ----------------------------------------------------------------
-  RoleA:
-    Type: AWS::IAM::Role
+  ApiVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
     Properties:
-      RoleName: 'RoleA'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root' # Allow root user in account to assume this role
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeActionHandlerLambdaPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'lambda:InvokeFunctionUrl'
-                Resource: !GetAtt LambdaFunctionUrl.FunctionUrl # Grant invoke on the Function URL
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.execute-api'
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
 
-  RoleB:
-    Type: AWS::IAM::Role
+  # ----------------------------------------------------------------
+  #   PRIVATE API GATEWAY
+  # ----------------------------------------------------------------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      RoleName: 'RoleB'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeActionHandlerLambdaPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'lambda:InvokeFunctionUrl'
-                Resource: !GetAtt LambdaFunctionUrl.FunctionUrl # Grant invoke on the Function URL
+      Name: !Sub '${LambdaFunctionName}-PrivateApi'
+      ProtocolType: HTTP
+      Body:
+        info:
+          title: !Ref AWS::StackName
+          version: '1.0'
+        paths:
+          /:
+            post:
+              x-amazon-apigateway-integration:
+                type: 'aws_proxy'
+                httpMethod: 'POST'
+                uri: !GetAtt ActionHandlerLambda.Arn
+                payloadFormatVersion: '2.0'
+              security:
+                - IAM: []
+        components:
+          securitySchemes:
+            IAM:
+              type: 'aws_iam'
+      EndpointConfiguration:
+        Type: PRIVATE
+      VpcEndpoints:
+        - !Ref ApiVpcEndpoint
 
   # ----------------------------------------------------------------
   #   LAMBDA FUNCTION AND EXECUTION ROLE
@@ -87,7 +92,7 @@ Resources:
               Service: lambda.amazonaws.com
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole' # For CloudWatch Logs
+        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: 'InvokeWorkerLambdasPolicy'
@@ -123,38 +128,65 @@ Resources:
           UPDATE_WORKER_LAMBDA_NAME: !Ref UpdateWorkerLambdaArn
           FETCH_WORKER_LAMBDA_NAME: !Ref FetchWorkerLambdaArn
 
-  # ----------------------------------------------------------------
-  #   LAMBDA FUNCTION URL AND PERMISSIONS
-  # ----------------------------------------------------------------
-  LambdaFunctionUrl:
-    Type: AWS::Lambda::Url
-    Properties:
-      TargetFunctionArn: !Ref ActionHandlerLambda
-      AuthType: AWS_IAM
-
-  LambdaInvokePermissionA:
+  # Lambda Permission to be invoked by API Gateway
+  LambdaApiGatewayInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref ActionHandlerLambda
-      Action: lambda:InvokeFunctionUrl
-      Principal: !GetAtt RoleA.Arn
-      FunctionUrlAuthType: AWS_IAM
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
-  LambdaInvokePermissionB:
-    Type: AWS::Lambda::Permission
+  # ----------------------------------------------------------------
+  #   CALLER IAM ROLES (Clients)
+  # ----------------------------------------------------------------
+  UpdateRole:
+    Type: AWS::IAM::Role
     Properties:
-      FunctionName: !Ref ActionHandlerLambda
-      Action: lambda:InvokeFunctionUrl
-      Principal: !GetAtt RoleB.Arn
-      FunctionUrlAuthType: AWS_IAM
+      RoleName: 'UpdateRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws-cn:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeApiGatewayPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  FetchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'FetchRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws-cn:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeApiGatewayPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
 Outputs:
-  LambdaFunctionUrl:
-    Description: "The URL of the Lambda function."
-    Value: !GetAtt LambdaFunctionUrl.FunctionUrl
-  RoleAToAssume:
-    Description: "ARN of RoleA to assume for testing."
-    Value: !GetAtt RoleA.Arn
-  RoleBToAssume:
-    Description: "ARN of RoleB to assume for testing."
-    Value: !GetAtt RoleB.Arn
+  ApiEndpoint:
+    Description: "The private API Gateway endpoint URL"
+    Value: !GetAtt HttpApi.ApiEndpoint
+  UpdateRoleToAssume:
+    Description: "ARN of UpdateRole to assume for testing."
+    Value: !GetAtt UpdateRole.Arn
+  FetchRoleToAssume:
+    Description: "ARN of FetchRole to assume for testing."
+    Value: !GetAtt FetchRole.Arn
