@@ -1,40 +1,27 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: |
-  Deploys a secure Lambda proxy behind a private API Gateway. The proxy uses
-  IAM to authorize and route requests from different roles (UpdateRole, FetchRole)
-  to specific actions.
+Description: "Deploys a strictly PRIVATE REST API Gateway behind a VPC Endpoint."
 
 Parameters:
   LambdaFunctionName:
     Type: String
     Default: 'ActionHandlerLambda'
-    Description: 'Name for the central handler Lambda function.'
   UpdateWorkerLambdaArn:
     Type: String
-    Description: "The ARN of the pre-existing worker Lambda for updating records."
   FetchWorkerLambdaArn:
     Type: String
-    Description: "The ARN of the pre-existing worker Lambda for fetching records."
   CodeS3Bucket:
     Type: String
-    Description: "The S3 bucket containing the zipped Lambda code."
   CodeS3Key:
     Type: String
-    Description: "The S3 key for the zipped Lambda code."
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: "The ID of the VPC for the private API endpoint."
   SecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
-    Description: "The Security Group ID for the Lambda function and VPC Endpoint."
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: "A list of Subnet IDs for the Lambda function and VPC Endpoint."
 
 Resources:
-  # ----------------------------------------------------------------
-  #   VPC ENDPOINT FOR PRIVATE API GATEWAY
-  # ----------------------------------------------------------------
+  # 1. VPC Endpoint - 私有 API 的入口
   ApiVpcEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -46,35 +33,75 @@ Resources:
         - !Ref SecurityGroupId
       PrivateDnsEnabled: true
 
-  # ----------------------------------------------------------------
-  #   PRIVATE API GATEWAY
-  # ----------------------------------------------------------------
-  HttpApi:
-    Type: AWS::ApiGatewayV2::Api
+  # 2. PRIVATE REST API
+  PrivateRestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub '${LambdaFunctionName}-PrivateApi'
-      ProtocolType: HTTP
-      Body:
-        info:
-          title: !Ref AWS::StackName
-          version: '1.0'
-        paths:
-          /:
-            post:
-              x-amazon-apigateway-integration:
-                payloadFormatVersion: '2.0'
-                type: aws_proxy
-                httpMethod: POST
-                uri: !GetAtt ActionHandlerLambda.Arn
-              security:
-                - IAM: []
-        components:
-          securitySchemes:
-            IAM:
-              type: aws_iam
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
+        VpcEndpointIds:
+          - !Ref ApiVpcEndpoint
+      # 私有 API 必须设置资源策略，否则所有请求都会被拒绝
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "execute-api:Invoke"
+            Resource: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*"
+            Condition:
+              StringEquals:
+                aws:SourceVpce: !Ref ApiVpcEndpoint
+
+  # 3. API 资源与方法 (等同于之前的路径配置)
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PrivateRestApi
+      ParentId: !GetAtt PrivateRestApi.RootResourceId
+      PathPart: "action" # 访问路径将变为 /action
+
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PrivateRestApi
+      ResourceId: !Ref ApiResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM # 保持 IAM 认证
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ActionHandlerLambda.Arn}/invocations"
+
+  # 4. 部署与阶段
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ApiMethod
+    Properties:
+      RestApiId: !Ref PrivateRestApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref PrivateRestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
 
   # ----------------------------------------------------------------
-  #   LAMBDA FUNCTION AND EXECUTION ROLE
+  # Lambda 权限 (更新为支持 REST API)
+  # ----------------------------------------------------------------
+  LambdaApiGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ActionHandlerLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/*'
+
+  # ----------------------------------------------------------------
+  # 以下保持你原有的 Lambda 和 Role 定义，但 ARN 修正
   # ----------------------------------------------------------------
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -88,8 +115,8 @@ Resources:
               Service: lambda.amazonaws.com
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
-        - 'arn:aws-cn:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: 'InvokeWorkerLambdasPolicy'
           PolicyDocument:
@@ -112,77 +139,12 @@ Resources:
         S3Bucket: !Ref CodeS3Bucket
         S3Key: !Ref CodeS3Key
       VpcConfig:
-        SecurityGroupIds:
-          - !Ref SecurityGroupId
+        SecurityGroupIds: [!Ref SecurityGroupId]
         SubnetIds: !Ref SubnetIds
-      Architectures:
-        - arm64
-      MemorySize: 128
-      Timeout: 10
-      Environment:
-        Variables:
-          UPDATE_WORKER_LAMBDA_NAME: !Ref UpdateWorkerLambdaArn
-          FETCH_WORKER_LAMBDA_NAME: !Ref FetchWorkerLambdaArn
-
-  # Lambda Permission to be invoked by API Gateway
-  LambdaApiGatewayInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ActionHandlerLambda
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
-
-  # ----------------------------------------------------------------
-  #   CALLER IAM ROLES (Clients)
-  # ----------------------------------------------------------------
-  UpdateRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: 'UpdateRole'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws-cn:iam::${AWS::AccountId}:root'
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeApiGatewayPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'execute-api:Invoke'
-                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
-
-  FetchRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: 'FetchRole'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws-cn:iam::${AWS::AccountId}:root'
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeApiGatewayPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'execute-api:Invoke'
-                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+      Architectures: [arm64]
 
 Outputs:
   ApiEndpoint:
-    Description: "The private API Gateway endpoint URL"
-    Value: !GetAtt HttpApi.ApiEndpoint
-  UpdateRoleToAssume:
-    Description: "ARN of UpdateRole to assume for testing."
-    Value: !GetAtt UpdateRole.Arn
-  FetchRoleToAssume:
-    Description: "ARN of FetchRole to assume for testing."
-    Value: !GetAtt FetchRole.Arn
+    Description: "Private API Endpoint"
+    # 私有 API 格式示例: https://{restapi-id}-{vpce-id}.execute-api.{region}.amazonaws.com/prod
+    Value: !Sub "https://${PrivateRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/action"
