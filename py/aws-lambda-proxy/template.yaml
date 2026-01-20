@@ -62,20 +62,16 @@ Resources:
           /:
             post:
               x-amazon-apigateway-integration:
-                type: 'aws_proxy'
-                httpMethod: 'POST'
-                uri: !GetAtt ActionHandlerLambda.Arn
                 payloadFormatVersion: '2.0'
+                type: aws_proxy
+                httpMethod: POST
+                uri: !GetAtt ActionHandlerLambda.Arn
               security:
                 - IAM: []
         components:
           securitySchemes:
             IAM:
-              type: 'aws_iam'
-      EndpointConfiguration:
-        Type: PRIVATE
-      VpcEndpoints:
-        - !Ref ApiVpcEndpoint
+              type: aws_iam
 
   # ----------------------------------------------------------------
   #   LAMBDA FUNCTION AND EXECUTION ROLE
