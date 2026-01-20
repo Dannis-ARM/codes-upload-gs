@@ -1,13 +1,15 @@
 #!/bin/bash
+# </noparse>
 
-# <#noparse>
 # Deploys the AWS Lambda function by packaging the code, uploading it to S3,
 # and deploying the CloudFormation stack from a template also in S3.
 #
 # Usage:
-#   ./deploy.sh <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>
+#   ./deploy.sh <stack-name> <template-file> <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>
 #
 # Arguments:
+#   stack-name: The name of the CloudFormation stack to deploy.
+#   template-file: The name of the CloudFormation template file (e.g., 'template.yaml').
 #   s3-bucket-name: The name of the S3 bucket to upload artifacts to.
 #   update-worker-arn: The ARN of the worker Lambda for updating records (e.g., arn:aws-cn:lambda:...)
 #   fetch-worker-arn: The ARN of the worker Lambda for fetching records (e.g., arn:aws-cn:lambda:...)
@@ -19,14 +21,14 @@
 set -e
 
 # --- Configuration ---
-STACK_NAME="ActionHandlerLambdaStack"
-TEMPLATE_FILE="template.yaml"
-S3_BUCKET="$1"
-UPDATE_WORKER_ARN="$2"
-FETCH_WORKER_ARN="$3"
-VPC_ID="$4"
-SECURITY_GROUP_ID="$5"
-SUBNET_IDS="$6"
+STACK_NAME="$1"
+TEMPLATE_FILE="$2"
+S3_BUCKET="$3"
+UPDATE_WORKER_ARN="$4"
+FETCH_WORKER_ARN="$5"
+VPC_ID="$6"
+SECURITY_GROUP_ID="$7"
+SUBNET_IDS="$8"
 
 # The name of the zip file that will be created and uploaded
 ZIP_FILE="main.py.zip"
@@ -37,8 +39,8 @@ S3_TEMPLATE_KEY="cfn-templates/$TEMPLATE_FILE"
 
 
 # --- Validate Input ---
-if [ -z "$S3_BUCKET" ] || [ -z "$UPDATE_WORKER_ARN" ] || [ -z "$FETCH_WORKER_ARN" ] || [ -z "$VPC_ID" ] || [ -z "$SECURITY_GROUP_ID" ] || [ -z "$SUBNET_IDS" ]; then
-  echo "Usage: $0 <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>"
+if [ -z "$STACK_NAME" ] || [ -z "$TEMPLATE_FILE" ] || [ -z "$S3_BUCKET" ] || [ -z "$UPDATE_WORKER_ARN" ] || [ -z "$FETCH_WORKER_ARN" ] || [ -z "$VPC_ID" ] || [ -z "$SECURITY_GROUP_ID" ] || [ -z "$SUBNET_IDS" ]; then
+  echo "Usage: $0 <stack-name> <template-file> <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>"
   echo "Please provide all required arguments."
   exit 1
 fi
@@ -78,33 +80,33 @@ fi
 
 # --- Main Script ---
 
-# 1. Package the Lambda function code
+# 1. Package the Lambda function code (main.py is always expected)
 echo "Packaging Lambda function..."
 # Create a temporary directory for packaging to ensure clean zip structure
 mkdir -p dist
-zip -j dist/$ZIP_FILE main.py # -j junks paths, so it doesn't store directory structure
+zip -j dist/main.py.zip main.py
 
 # 2. Upload artifacts to S3
 echo "Uploading Lambda code package to S3..."
-aws s3 cp dist/$ZIP_FILE "s3://$S3_BUCKET/$S3_CODE_KEY"
+aws s3 cp dist/main.py.zip "s3://$S3_BUCKET/$S3_CODE_KEY"
 
 echo "Uploading CloudFormation template to S3..."
-aws s3 cp $TEMPLATE_FILE "s3://$S3_BUCKET/$S3_TEMPLATE_KEY"
+aws s3 cp "$TEMPLATE_FILE" "s3://$S3_BUCKET/$S3_TEMPLATE_KEY"
 
 # 3. Deploy the CloudFormation stack from S3
 echo "Deploying CloudFormation stack from S3 template..."
 aws cloudformation deploy \
   --template-file "s3://$S3_BUCKET/$S3_TEMPLATE_KEY" \
-  --stack-name $STACK_NAME \
+  --stack-name "$STACK_NAME" \
   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
   --parameter-overrides \
-    CodeS3Bucket=$S3_BUCKET \
-    CodeS3Key=$S3_CODE_KEY \
-    UpdateWorkerLambdaArn=$UPDATE_WORKER_ARN \
-    FetchWorkerLambdaArn=$FETCH_WORKER_ARN \
-    VpcId=$VPC_ID \
-    SecurityGroupId=$SECURITY_GROUP_ID \
-    SubnetIds="""$SUBNET_IDS"""
+    CodeS3Bucket="$S3_BUCKET" \
+    CodeS3Key="$S3_CODE_KEY" \
+    UpdateWorkerLambdaArn="$UPDATE_WORKER_ARN" \
+    FetchWorkerLambdaArn="$FETCH_WORKER_ARN" \
+    VpcId="$VPC_ID" \
+    SecurityGroupId="$SECURITY_GROUP_ID" \
+    SubnetIds="$SUBNET_IDS"
 
 echo "Deployment complete."
 
@@ -113,5 +115,4 @@ echo "Cleaning up..."
 rm -rf dist
 
 echo "Done."
-
 # </#noparse>
