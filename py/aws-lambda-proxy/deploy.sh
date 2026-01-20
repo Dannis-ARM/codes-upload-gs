@@ -93,22 +93,70 @@ aws s3 cp dist/main.py.zip "s3://$S3_BUCKET/$S3_CODE_KEY"
 echo "Uploading CloudFormation template to S3..."
 aws s3 cp "$TEMPLATE_FILE" "s3://$S3_BUCKET/$S3_TEMPLATE_KEY"
 
-# 3. Deploy the CloudFormation stack from S3
-echo "Deploying CloudFormation stack from S3 template..."
-aws cloudformation deploy \
-  --template-file "s3://$S3_BUCKET/$S3_TEMPLATE_KEY" \
-  --stack-name "$STACK_NAME" \
-  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    CodeS3Bucket="$S3_BUCKET" \
-    CodeS3Key="$S3_CODE_KEY" \
-    UpdateWorkerLambdaArn="$UPDATE_WORKER_ARN" \
-    FetchWorkerLambdaArn="$FETCH_WORKER_ARN" \
-    VpcId="$VPC_ID" \
-    SecurityGroupId="$SECURITY_GROUP_ID" \
-    SubnetIds="$SUBNET_IDS"
+# 3. Deploy the CloudFormation stack with robust logic
+# --- Deployment Functions ---
 
-echo "Deployment complete."
+deploy_stack() {
+  echo "Deploying CloudFormation stack '$STACK_NAME'..."
+  # The 'aws cloudformation deploy' command creates the stack if it doesn't exist,
+  # or updates it if it does. It uses the template that's already in S3.
+  aws cloudformation deploy \
+    --template-file "s3://$S3_BUCKET/$S3_TEMPLATE_KEY" \
+    --stack-name "$STACK_NAME" \
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+      CodeS3Bucket="$S3_BUCKET" \
+      CodeS3Key="$S3_CODE_KEY" \
+      UpdateWorkerLambdaArn="$UPDATE_WORKER_ARN" \
+      FetchWorkerLambdaArn="$FETCH_WORKER_ARN" \
+      VpcId="$VPC_ID" \
+      SecurityGroupId="$SECURITY_GROUP_ID" \
+      SubnetIds="$SUBNET_IDS"
+}
+
+destroy_stack() {
+  echo "Attempting to destroy CloudFormation stack '$STACK_NAME'..."
+  # Check if stack exists before trying to delete it to avoid errors.
+  if aws cloudformation describe-stacks --stack-name "$STACK_NAME" > /dev/null 2>&1; then
+    echo "Stack '$STACK_NAME' exists. Deleting..."
+    aws cloudformation delete-stack --stack-name "$STACK_NAME"
+    echo "Waiting for stack to be destroyed..."
+    aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+    echo "Stack '$STACK_NAME' destroyed."
+  else
+    echo "Stack '$STACK_NAME' does not exist, no need to destroy."
+  fi
+}
+
+# --- Main Deployment Logic ---
+# Based on stack existence, we decide to create or update, with retry logic.
+if aws cloudformation describe-stacks --stack-name "$STACK_NAME" > /dev/null 2>&1; then
+  echo "Stack '$STACK_NAME' exists. Attempting to update..."
+  if ! deploy_stack; then
+    echo "Stack update failed. To recover, attempting to destroy and recreate the stack."
+    destroy_stack
+    echo "Re-attempting to create stack '$STACK_NAME'..."
+    if ! deploy_stack; then
+      echo "FATAL: Failed to recreate stack '$STACK_NAME' after destruction. Please check the AWS CloudFormation console for details."
+      exit 1
+    fi
+  fi
+else
+  echo "Stack '$STACK_NAME' does not exist. Attempting to create..."
+  if ! deploy_stack; then
+    echo "Initial stack creation failed. The stack may be in a ROLLBACK_COMPLETE state."
+    echo "To recover, attempting to destroy and recreate the stack."
+    destroy_stack
+    echo "Re-attempting to create stack '$STACK_NAME'..."
+    if ! deploy_stack; then
+      echo "FATAL: Failed to create stack '$STACK_NAME' on second attempt. Please check the AWS CloudFormation console for details."
+      exit 1
+    fi
+  fi
+fi
+
+echo "Deployment of stack '$STACK_NAME' complete."
 
 # Clean up local zip file
 echo "Cleaning up..."
