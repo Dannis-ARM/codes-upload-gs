@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: "Deploys a strictly PRIVATE REST API Gateway behind a VPC Endpoint."
+Description: "Multi-Region Private REST API Gateway with IAM Authentication and Registry-CLI path."
 
 Parameters:
   LambdaFunctionName:
     Type: String
-    Default: 'ActionHandlerLambda'
+    Default: 'ProxyLambda'
   UpdateWorkerLambdaArn:
     Type: String
   FetchWorkerLambdaArn:
@@ -21,7 +21,10 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
 
 Resources:
-  # 1. VPC Endpoint - 私有 API 的入口
+  # ----------------------------------------------------------------
+  # 1. VPC ENDPOINT
+  # Provides private connectivity to the API Gateway service
+  # ----------------------------------------------------------------
   ApiVpcEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -33,7 +36,10 @@ Resources:
         - !Ref SecurityGroupId
       PrivateDnsEnabled: true
 
+  # ----------------------------------------------------------------
   # 2. PRIVATE REST API
+  # Configured as PRIVATE type to restrict access to the VPC Endpoint
+  # ----------------------------------------------------------------
   PrivateRestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -43,7 +49,7 @@ Resources:
           - PRIVATE
         VpcEndpointIds:
           - !Ref ApiVpcEndpoint
-      # 私有 API 必须设置资源策略，否则所有请求都会被拒绝
+      # Resource Policy: Allows invocation only via the specified VPC Endpoint
       Policy:
         Version: '2012-10-17'
         Statement:
@@ -55,27 +61,28 @@ Resources:
               StringEquals:
                 aws:SourceVpce: !Ref ApiVpcEndpoint
 
-  # 3. API 资源与方法 (等同于之前的路径配置)
+  # API Resource Path: /registry-cli
   ApiResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref PrivateRestApi
       ParentId: !GetAtt PrivateRestApi.RootResourceId
-      PathPart: "action" # 访问路径将变为 /action
+      PathPart: "registry-cli"
 
+  # API Method: POST with IAM Authorization
   ApiMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref PrivateRestApi
       ResourceId: !Ref ApiResource
       HttpMethod: POST
-      AuthorizationType: AWS_IAM # 保持 IAM 认证
+      AuthorizationType: AWS_IAM
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ActionHandlerLambda.Arn}/invocations"
+        # URI format for Lambda integration in REST API
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProxyLambda.Arn}/invocations"
 
-  # 4. 部署与阶段
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn: ApiMethod
@@ -90,45 +97,9 @@ Resources:
       StageName: prod
 
   # ----------------------------------------------------------------
-  # Lambda 权限 (更新为支持 REST API)
+  # 3. LAMBDA FUNCTION & PERMISSIONS
   # ----------------------------------------------------------------
-  LambdaApiGatewayInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ActionHandlerLambda
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/*'
-
-  # ----------------------------------------------------------------
-  # 以下保持你原有的 Lambda 和 Role 定义，但 ARN 修正
-  # ----------------------------------------------------------------
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${LambdaFunctionName}-ExecutionRole'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
-      Policies:
-        - PolicyName: 'InvokeWorkerLambdasPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'lambda:InvokeFunction'
-                Resource:
-                  - !Ref UpdateWorkerLambdaArn
-                  - !Ref FetchWorkerLambdaArn
-
-  ActionHandlerLambda:
+  ProxyLambda:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Ref LambdaFunctionName
@@ -143,8 +114,80 @@ Resources:
         SubnetIds: !Ref SubnetIds
       Architectures: [arm64]
 
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+
+  # Permission for API Gateway to trigger the Lambda
+  LambdaApiGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProxyLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/*'
+
+  # ----------------------------------------------------------------
+  # 4. CALLER IAM ROLES
+  # Roles used by clients to sign and send requests to the API
+  # ----------------------------------------------------------------
+  UpdateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'UpdateRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeApiGatewayPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/prod/POST/registry-cli'
+
+  FetchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'FetchRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'InvokeApiGatewayPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/prod/POST/registry-cli'
+
 Outputs:
   ApiEndpoint:
-    Description: "Private API Endpoint"
-    # 私有 API 格式示例: https://{restapi-id}-{vpce-id}.execute-api.{region}.amazonaws.com/prod
-    Value: !Sub "https://${PrivateRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/action"
+    Description: "The private API Gateway endpoint URL"
+    # Note: China region requires .com.cn, global uses .com
+    Value: !Sub 
+      - "https://${PrivateRestApi}.execute-api.${AWS::Region}.${Suffix}/prod/registry-cli"
+      - Suffix: !If [IsChina, "amazonaws.com.cn", "amazonaws.com"]
+
+Conditions:
+  IsChina: !Equals [!Ref "AWS::Partition", "aws-cn"]
