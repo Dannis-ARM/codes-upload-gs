@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# <noparse>
+# <#noparse>
 # Deploys the AWS Lambda function by packaging the code, uploading it to S3,
 # and deploying the CloudFormation stack from a template also in S3.
 #
@@ -114,4 +114,4 @@ rm -rf dist
 
 echo "Done."
 
-# </noparse>
+# </#noparse>
