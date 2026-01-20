@@ -1,13 +1,14 @@
 #!/bin/bash
 
+# <noparse>
 # Deploys the AWS Lambda function by packaging the code, uploading it to S3,
-# and deploying the CloudFormation stack.
+# and deploying the CloudFormation stack from a template also in S3.
 #
 # Usage:
 #   ./deploy.sh <s3-bucket-name> <update-worker-arn> <fetch-worker-arn> <vpc-id> <security-group-id> <subnet-ids>
 #
 # Arguments:
-#   s3-bucket-name: The name of the S3 bucket to upload the Lambda code to.
+#   s3-bucket-name: The name of the S3 bucket to upload artifacts to.
 #   update-worker-arn: The ARN of the worker Lambda for updating records (e.g., arn:aws-cn:lambda:...)
 #   fetch-worker-arn: The ARN of the worker Lambda for fetching records (e.g., arn:aws-cn:lambda:...)
 #   vpc-id: The ID of the VPC for the private API endpoint.
@@ -30,7 +31,10 @@ SUBNET_IDS="$6"
 # The name of the zip file that will be created and uploaded
 ZIP_FILE="main.py.zip"
 # The key (path) in the S3 bucket where the zip file will be stored
-S3_KEY="lambda-code/$ZIP_FILE"
+S3_CODE_KEY="lambda-code/$ZIP_FILE"
+# The key (path) in the S3 bucket where the CloudFormation template will be stored
+S3_TEMPLATE_KEY="cfn-templates/$TEMPLATE_FILE"
+
 
 # --- Validate Input ---
 if [ -z "$S3_BUCKET" ] || [ -z "$UPDATE_WORKER_ARN" ] || [ -z "$FETCH_WORKER_ARN" ] || [ -z "$VPC_ID" ] || [ -z "$SECURITY_GROUP_ID" ] || [ -z "$SUBNET_IDS" ]; then
@@ -80,19 +84,22 @@ echo "Packaging Lambda function..."
 mkdir -p dist
 zip -j dist/$ZIP_FILE main.py # -j junks paths, so it doesn't store directory structure
 
-# 2. Upload the package to S3
-echo "Uploading package to S3 bucket: $S3_BUCKET"
-aws s3 cp dist/$ZIP_FILE s3://$S3_BUCKET/$S3_KEY
+# 2. Upload artifacts to S3
+echo "Uploading Lambda code package to S3..."
+aws s3 cp dist/$ZIP_FILE "s3://$S3_BUCKET/$S3_CODE_KEY"
 
-# 3. Deploy the CloudFormation stack
-echo "Deploying CloudFormation stack..."
+echo "Uploading CloudFormation template to S3..."
+aws s3 cp $TEMPLATE_FILE "s3://$S3_BUCKET/$S3_TEMPLATE_KEY"
+
+# 3. Deploy the CloudFormation stack from S3
+echo "Deploying CloudFormation stack from S3 template..."
 aws cloudformation deploy \
-  --template-file $TEMPLATE_FILE \
+  --template-file "s3://$S3_BUCKET/$S3_TEMPLATE_KEY" \
   --stack-name $STACK_NAME \
   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
   --parameter-overrides \
     CodeS3Bucket=$S3_BUCKET \
-    CodeS3Key=$S3_KEY \
+    CodeS3Key=$S3_CODE_KEY \
     UpdateWorkerLambdaArn=$UPDATE_WORKER_ARN \
     FetchWorkerLambdaArn=$FETCH_WORKER_ARN \
     VpcId=$VPC_ID \
@@ -106,3 +113,5 @@ echo "Cleaning up..."
 rm -rf dist
 
 echo "Done."
+
+# </noparse>
