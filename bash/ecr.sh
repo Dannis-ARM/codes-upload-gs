@@ -1,52 +1,77 @@
 #!/bin/bash
 
-# Configuration
+# --- Configuration ---
 REPO_NAME="your-repo-name"
 IMAGE_TAG="v1.2.3"
 REGISTRY_URL="123456789012.dkr.ecr.us-east-1.amazonaws.com"
 FULL_IMAGE="${REGISTRY_URL}/${REPO_NAME}:${IMAGE_TAG}"
 
-echo "Starting deployment check for ${FULL_IMAGE}..."
+# --- Functions ---
 
-# 1. Check if the repository is Immutable
-# Check repository tag mutability setting
-MUTABILITY=$(aws ecr describe-repositories \
-    --repository-names "$REPO_NAME" \
-    --query 'repositories[0].imageTagMutability' \
-    --output text)
+# Function: Check if the ECR repository is set to IMMUTABLE
+# Returns: "IMMUTABLE" or "MUTABLE"
+get_repo_mutability() {
+    local repo=$1
+    # Get the mutability setting using AWS CLI
+    aws ecr describe-repositories \
+        --repository-names "$repo" \
+        --query 'repositories[0].imageTagMutability' \
+        --output text
+}
 
-echo "Repository mutability setting: $MUTABILITY"
+# Function: Check if a specific tag already exists in the ECR repo
+# Returns: 0 (exists), 1 (does not exist)
+check_tag_exists() {
+    local repo=$1
+    local tag=$2
+    # Check for image existence; suppress output
+    if aws ecr describe-images --repository-name "$repo" --image-ids imageTag="$tag" > /dev/null 2>&1; then
+        return 0 # Tag exists
+    else
+        return 1 # Tag does not exist
+    fi
+}
 
-SHOULD_PUSH=true
+# Function: Core logic to decide whether to push or abort
+safe_push() {
+    local repo=$1
+    local tag=$2
+    local full_img=$3
 
-if [ "$MUTABILITY" == "IMMUTABLE" ]; then
-    echo "Policy is IMMUTABLE. Checking for existing tag..."
+    echo "Checking policy for repository: $repo"
     
-    # 2. Check if the tag already exists in the ECR repo
-    # If the tag exists, describe-images will return 0; if not, it returns an error
-    if aws ecr describe-images --repository-name "$REPO_NAME" --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
-        echo "Error: Tag '$IMAGE_TAG' already exists and repository is immutable."
-        SHOULD_PUSH=false
+    # 1. Get mutability status
+    local mutability=$(get_repo_mutability "$repo")
+    
+    if [ "$mutability" == "IMMUTABLE" ]; then
+        echo "Status: IMMUTABLE. Checking for tag existence..."
+        
+        # 2. Check for tag conflict
+        if check_tag_exists "$repo" "$tag"; then
+            echo "Error: Tag '$tag' already exists. Aborting push to prevent policy violation."
+            return 1
+        fi
+        echo "Tag '$tag' is unique. Proceeding..."
     else
-        echo "Tag '$IMAGE_TAG' does not exist. Proceeding..."
+        echo "Status: MUTABLE. Overwriting is allowed."
     fi
-else
-    echo "Repository is MUTABLE. Overwriting is allowed."
-fi
 
-# 3. Execution logic
-if [ "$SHOULD_PUSH" = true ]; then
-    echo "Executing: podman push $FULL_IMAGE"
-    if podman push "$FULL_IMAGE"; then
-        echo "Push successful!"
-        # Put your next steps here (e.g., echo 123)
-        echo 123
+    # 3. Perform the actual push
+    echo "Pushing image: $full_img"
+    if podman push "$full_img"; then
+        return 0
     else
-        echo "Push failed due to network or authentication issues."
-        exit 1
+        echo "Push failed during execution."
+        return 1
     fi
+}
+
+# --- Main Execution ---
+
+# Call the function and handle the result
+if safe_push "$REPO_NAME" "$IMAGE_TAG" "$FULL_IMAGE"; then
+    echo "✅ Success: 123"
 else
-    echo "Push aborted to prevent tag conflict."
-    # Decide if you want the script to fail (exit 1) or just skip (exit 0)
+    echo "❌ Failed: Push aborted or encountered error."
     exit 1
 fi
