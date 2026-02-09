@@ -1,35 +1,52 @@
 #!/bin/bash
 
-# 变量配置
-REPO_NAME="your-ecr-repo-name"
-IMAGE_TAG="v1.2.3" # 或者是你的 $TAG 变量
-IMAGE_FULL_NAME="123456789012.dkr.ecr.us-east-1.amazonaws.com/${REPO_NAME}:${IMAGE_TAG}"
+# Configuration
+REPO_NAME="your-repo-name"
+IMAGE_TAG="v1.2.3"
+REGISTRY_URL="123456789012.dkr.ecr.us-east-1.amazonaws.com"
+FULL_IMAGE="${REGISTRY_URL}/${REPO_NAME}:${IMAGE_TAG}"
 
-echo "正在检查 ECR 标签状态..."
+echo "Starting deployment check for ${FULL_IMAGE}..."
 
-# 1. 使用 AWS CLI 检查标签是否存在
-# --query 能够直接筛选结果，2>/dev/null 隐藏找不到标签时的报错
-EXISTING_TAG=$(aws ecr describe-images \
-    --repository-name "$REPO_NAME" \
-    --image-ids imageTag="$IMAGE_TAG" \
-    --query 'imageDetails[0].imageTags' \
-    --output text 2>/dev/null)
+# 1. Check if the repository is Immutable
+# Check repository tag mutability setting
+MUTABILITY=$(aws ecr describe-repositories \
+    --repository-names "$REPO_NAME" \
+    --query 'repositories[0].imageTagMutability' \
+    --output text)
 
-if [ "$EXISTING_TAG" == "$IMAGE_TAG" ]; then
-    echo "警告: 标签 [$IMAGE_TAG] 在仓库 [$REPO_NAME] 中已存在。"
-    echo "由于 ECR 开启了不可变策略，跳过推送。"
-    # 如果你想让脚本在这里失败退出，取消下面这行的注释
-    # exit 1 
-else
-    echo "标签不存在，准备推送镜像..."
+echo "Repository mutability setting: $MUTABILITY"
+
+SHOULD_PUSH=true
+
+if [ "$MUTABILITY" == "IMMUTABLE" ]; then
+    echo "Policy is IMMUTABLE. Checking for existing tag..."
     
-    # 2. 执行推送
-    if podman push "$IMAGE_FULL_NAME"; then
-        echo "✅ 镜像推送成功！"
-        # 在这里执行你的后续逻辑，比如 echo 123
+    # 2. Check if the tag already exists in the ECR repo
+    # If the tag exists, describe-images will return 0; if not, it returns an error
+    if aws ecr describe-images --repository-name "$REPO_NAME" --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
+        echo "Error: Tag '$IMAGE_TAG' already exists and repository is immutable."
+        SHOULD_PUSH=false
+    else
+        echo "Tag '$IMAGE_TAG' does not exist. Proceeding..."
+    fi
+else
+    echo "Repository is MUTABLE. Overwriting is allowed."
+fi
+
+# 3. Execution logic
+if [ "$SHOULD_PUSH" = true ]; then
+    echo "Executing: podman push $FULL_IMAGE"
+    if podman push "$FULL_IMAGE"; then
+        echo "Push successful!"
+        # Put your next steps here (e.g., echo 123)
         echo 123
     else
-        echo "❌ Podman 推送失败，请检查网络或权限。"
+        echo "Push failed due to network or authentication issues."
         exit 1
     fi
+else
+    echo "Push aborted to prevent tag conflict."
+    # Decide if you want the script to fail (exit 1) or just skip (exit 0)
+    exit 1
 fi
