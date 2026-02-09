@@ -5,12 +5,13 @@ from string import Template
 from dateutil import parser
 
 class CloudTrailAthenaClient:
-    def __init__(self, region, s3_log_path, s3_output_path, database='default', table_name='org_cloudtrail_optimized'):
+    def __init__(self, region, s3_log_path, s3_output_path, database='default', table_name='org_cloudtrail_china'):
         """
-        :param region: AWS region (e.g., 'us-east-1')
-        :param s3_log_path: Root S3 path for logs (up to o-xxxxxx level)
-        :param s3_output_path: S3 path to store Athena query results
+        :param region: AWS China region ('cn-north-1' or 'cn-northwest-1')
+        :param s3_log_path: S3 root path (e.g., s3://my-bucket/AWSLogs/o-xxxxxx/)
+        :param s3_output_path: S3 path for Athena query results
         """
+        # Ensure you are using the correct region for the Boto3 client
         self.client = boto3.client('athena', region_name=region)
         self.s3_log_path = s3_log_path.rstrip('/') + '/'
         self.s3_output_path = s3_output_path.rstrip('/') + '/'
@@ -23,27 +24,30 @@ class CloudTrailAthenaClient:
         return template.safe_substitute(mapping)
 
     def setup_table(self, ddl_template):
-        """Execute DDL to ensure the Athena table exists with Partition Projection"""
+        """
+        Update table with dynamic year range and China regions.
+        """
+        current_year = datetime.now(timezone.utc).year
+        # Coverage: 20 years ago to next year
+        year_range = f"{current_year - 20},{current_year + 1}"
+        
         sql = self._load_sql_template(ddl_template, {
             'database': self.database,
             'table_name': self.table_name,
-            's3_log_path': self.s3_log_path
+            's3_log_path': self.s3_log_path,
+            'year_range': year_range
         })
-        print(f"--- Ensuring Athena table exists: {self.table_name} ---")
+        
+        print(f"--- Updating Athena table for China Regions (Range: {year_range}) ---")
         return self._execute_wait(sql, timeout=60)
 
     def query_events(self, query_template, access_key_id, account_id, region, start_utc, end_utc=None, timeout=300):
         """
-        Execute business query for specific Access Key within a UTC time range.
-        :param start_utc: Start time string (e.g., '2026-02-01T00:00:00Z')
-        :param end_utc: End time string. Defaults to current UTC time if None.
-        :param timeout: Maximum wait time in seconds.
+        Query CloudTrail events with auto end_utc (defaults to NOW).
         """
-        # Default to current UTC time if end_utc is not provided
         if end_utc is None:
             end_utc = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         
-        # Parse start_utc to extract partition keys (year, month) for performance
         dt_start = parser.isoparse(start_utc)
         
         sql = self._load_sql_template(query_template, {
@@ -58,12 +62,12 @@ class CloudTrailAthenaClient:
             'end_utc': end_utc
         })
         
-        print(f"--- Querying range: {start_utc} to {end_utc} ---")
+        print(f"--- Executing search in {region} from {start_utc} to {end_utc} ---")
         execution_id = self._execute_wait(sql, timeout=timeout)
         return self._get_full_results(execution_id)
 
     def _execute_wait(self, query, timeout):
-        """Poll Athena query status, handle timeout, and report performance"""
+        """Monitor Athena query status with timeout handling"""
         start_perf = time.perf_counter()
         response = self.client.start_query_execution(
             QueryString=query,
@@ -76,7 +80,6 @@ class CloudTrailAthenaClient:
         while True:
             elapsed = time.perf_counter() - start_perf
             if elapsed > timeout:
-                # Stop the query on AWS side to save costs if Python times out
                 self.client.stop_query_execution(QueryExecutionId=qid)
                 raise TimeoutError(f"Athena query {qid} timed out after {timeout}s.")
 
@@ -85,20 +88,18 @@ class CloudTrailAthenaClient:
             
             if state == 'SUCCEEDED':
                 stats = status_resp['QueryExecution']['Statistics']
-                print(f"Query Succeeded! Time: {time.perf_counter() - start_perf:.2f}s")
-                print(f"Data Scanned: {stats.get('DataScannedInBytes', 0) / 1024**2:.2f} MB")
+                print(f"Success! Time: {time.perf_counter() - start_perf:.2f}s, Scanned: {stats.get('DataScannedInBytes', 0) / 1024**2:.2f} MB")
                 return qid
             
             if state in ['FAILED', 'CANCELLED']:
                 reason = status_resp['QueryExecution']['Status'].get('StateChangeReason', 'Unknown')
-                raise Exception(f"Athena query {state}: {reason}")
+                raise Exception(f"Athena error ({state}): {reason}")
             
-            # Exponential backoff for polling
             time.sleep(min(wait_time, 10))
             wait_time *= 2
 
     def _get_full_results(self, qid):
-        """Fetch all rows from Athena using paginator to bypass the 1000-row limit"""
+        """Retrieve all results using pagination"""
         paginator = self.client.get_paginator('get_query_results')
         all_rows = []
         for page in paginator.paginate(QueryExecutionId=qid):
@@ -106,8 +107,9 @@ class CloudTrailAthenaClient:
                 all_rows.append([val.get('VarCharValue', '') for val in row['Data']])
         return all_rows
 
-# --- SQL Templates ---
+# --- China-Specific SQL Templates ---
 
+# Note the 'projection.region.values' updated for China
 DDL_TEMPLATE = """
 CREATE EXTERNAL TABLE IF NOT EXISTS ${database}.${table_name} (
     eventVersion STRING,
@@ -136,7 +138,7 @@ TBLPROPERTIES (
     'projection.region.type' = 'enum',
     'projection.region.values' = 'cn-north-1,cn-northwest-1',
     'projection.year.type' = 'integer',
-    'projection.year.range' = '2024,2027',
+    'projection.year.range' = '${year_range}',
     'projection.month.type' = 'integer',
     'projection.month.range' = '01,12',
     'projection.month.digits' = '2',
@@ -165,38 +167,37 @@ AND eventTime <= '${end_utc}'
 ORDER BY eventTime ASC
 """
 
-# --- Execution Example ---
+# --- Main Logic ---
 
 if __name__ == "__main__":
-    REGION = 'cn-north-1'
+    # Example: Beijing region
+    CHINA_REGION = 'cn-north-1' 
+    # Replace with your actual China S3 paths
+    S3_LOGS = "s3://your-china-bucket/AWSLogs/o-xxxxxxxxx/"
+    S3_TEMP = "s3://your-china-bucket/athena-results/"
 
-    # Initialize client
     scanner = CloudTrailAthenaClient(
-        region=REGION,
-        s3_log_path="s3://your-log-bucket/AWSLogs/o-xxxxxxxxx/",
-        s3_output_path="s3://your-result-bucket/athena-outputs/"
+        region=CHINA_REGION,
+        s3_log_path=S3_LOGS,
+        s3_output_path=S3_TEMP
     )
 
     try:
-        # Step 1: Initialize table structure (Run once)
+        # Step 1: Initialize/Update table with China region configs
         scanner.setup_table(DDL_TEMPLATE)
 
-        # Step 2: Query events from specific start time to NOW (default)
+        # Step 2: Search events in China region
         events = scanner.query_events(
             query_template=QUERY_TEMPLATE,
-            access_key_id='AKIAXXXXXXXXXXXXXXXX',
-            account_id='123456789012',
-            region=REGION,
-            start_utc='2026-02-09T00:00:00Z'  # From today 00:00 UTC until now
+            access_key_id='AKIAXXXXXXXXXXXXXXXX', # Your China Access Key
+            account_id='123456789012',           # Your China Account ID
+            region='cn-north-1',                 # Specific region to scan
+            start_utc='2026-02-01T00:00:00Z'
         )
 
-        # Step 3: Print summary
-        if len(events) > 1:
-            print(f"\nRetrieved {len(events)-1} events.")
-            for row in events[:5]: # Print header + first 4 results
-                print(row)
-        else:
-            print("\nNo events found.")
+        print(f"\nTotal events found: {len(events)-1}")
+        for row in events[:6]:
+            print(row)
 
     except Exception as e:
-        print(f"\nExecution failed: {e}")
+        print(f"Error: {e}")
