@@ -1,3 +1,4 @@
+# <#noparse>
 AWSTemplateFormatVersion: '2010-09-09'
 Description: "Multi-Region Private REST API Gateway with IAM Authentication and Registry-CLI path."
 
@@ -5,6 +6,9 @@ Parameters:
   LambdaFunctionName:
     Type: String
     Default: 'ProxyLambda'
+  AuthorizerLambdaFunctionName:
+    Type: String
+    Default: 'ProxyLambdaAuthorizer'
   UpdateWorkerLambdaArn:
     Type: String
   FetchWorkerLambdaArn:
@@ -23,7 +27,6 @@ Parameters:
 Resources:
   # ----------------------------------------------------------------
   # 1. VPC ENDPOINT
-  # Provides private connectivity to the API Gateway service
   # ----------------------------------------------------------------
   ApiVpcEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -37,19 +40,15 @@ Resources:
       PrivateDnsEnabled: true
 
   # ----------------------------------------------------------------
-  # 2. PRIVATE REST API
-  # Configured as PRIVATE type to restrict access to the VPC Endpoint
+  # 2. PRIVATE REST API & AUTHORIZER
   # ----------------------------------------------------------------
   PrivateRestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub '${LambdaFunctionName}-PrivateApi'
       EndpointConfiguration:
-        Types:
-          - PRIVATE
-        VpcEndpointIds:
-          - !Ref ApiVpcEndpoint
-      # Resource Policy: Allows invocation only via the specified VPC Endpoint
+        Types: [PRIVATE]
+        VpcEndpointIds: [!Ref ApiVpcEndpoint]
       Policy:
         Version: '2012-10-17'
         Statement:
@@ -61,7 +60,18 @@ Resources:
               StringEquals:
                 aws:SourceVpce: !Ref ApiVpcEndpoint
 
-  # API Resource Path: /registry-cli
+  LambdaAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: 'LambdaAuthorizer'
+      RestApiId: !Ref PrivateRestApi
+      Type: REQUEST
+      AuthorizerUri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambda.Arn}/invocations"
+      # The client must include a header 'x-caller-role-name' with their role (e.g., 'UpdateRole')
+      IdentitySource: 'method.request.header.x-caller-role-name'
+      # Optionally, cache the authorizer response for 5 minutes (300 seconds)
+      # AuthorizerResultTtlInSeconds: 300
+
   ApiResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -69,18 +79,17 @@ Resources:
       ParentId: !GetAtt PrivateRestApi.RootResourceId
       PathPart: "registry-cli"
 
-  # API Method: POST with IAM Authorization
   ApiMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref PrivateRestApi
       ResourceId: !Ref ApiResource
       HttpMethod: POST
-      AuthorizationType: AWS_IAM
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref LambdaAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        # URI format for Lambda integration in REST API
         Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProxyLambda.Arn}/invocations"
 
   ApiDeployment:
@@ -97,15 +106,17 @@ Resources:
       StageName: prod
 
   # ----------------------------------------------------------------
-  # 3. LAMBDA FUNCTION & PERMISSIONS
+  # 3. LAMBDA FUNCTIONS & PERMISSIONS
   # ----------------------------------------------------------------
+
+  # Integration Lambda (Business Logic)
   ProxyLambda:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Ref LambdaFunctionName
       Runtime: python3.11
       Role: !GetAtt LambdaExecutionRole.Arn
-      Handler: main.lambda_handler
+      Handler: proxy.lambda_handler # Explicitly set handler
       Code:
         S3Bucket: !Ref CodeS3Bucket
         S3Key: !Ref CodeS3Key
@@ -121,73 +132,90 @@ Resources:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
+            Principal: { Service: lambda.amazonaws.com }
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
 
-  # Permission for API Gateway to trigger the Lambda
   LambdaApiGatewayInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref ProxyLambda
+      FunctionName: !GetAtt ProxyLambda.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/*'
 
-  # ----------------------------------------------------------------
-  # 4. CALLER IAM ROLES
-  # Roles used by clients to sign and send requests to the API
-  # ----------------------------------------------------------------
-  UpdateRole:
-    Type: AWS::IAM::Role
+  # Authorizer Lambda
+  AuthorizerLambda:
+    Type: AWS::Lambda::Function
     Properties:
-      RoleName: 'UpdateRole'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeApiGatewayPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'execute-api:Invoke'
-                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/prod/POST/registry-cli'
+      FunctionName: !Ref AuthorizerLambdaFunctionName
+      Runtime: python3.11
+      Role: !GetAtt AuthorizerLambdaExecutionRole.Arn
+      Handler: authorizer.authorizer_handler # Points to the new authorizer code
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Architectures: [arm64]
 
-  FetchRole:
+  AuthorizerLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: 'FetchRole'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Principal: { Service: lambda.amazonaws.com }
             Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'InvokeApiGatewayPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'execute-api:Invoke'
-                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/prod/POST/registry-cli'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  AuthorizerLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AuthorizerLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PrivateRestApi}/authorizers/*'
 
 Outputs:
   ApiEndpoint:
     Description: "The private API Gateway endpoint URL"
-    # Note: China region requires .com.cn, global uses .com
     Value: !Sub 
       - "https://${PrivateRestApi}.execute-api.${AWS::Region}.${Suffix}/prod/registry-cli"
       - Suffix: !If [IsChina, "amazonaws.com.cn", "amazonaws.com"]
 
+  # ----------------------------------------------------------------
+  # 4. CALLER IAM ROLES (FOR IDENTITY)
+  # Roles assumed by clients to establish an identity.
+  # The role name is passed in the 'x-caller-role-name' header to the API.
+  # These roles no longer need execute-api:Invoke permissions directly.
+  # ----------------------------------------------------------------
+  ReadWriteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'ReadWriteRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' # Principals who can assume this role should be restricted
+            Action: 'sts:AssumeRole'
+
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'ReadOnlyRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' # Principals who can assume this role should be restricted
+            Action: 'sts:AssumeRole'
+
 Conditions:
   IsChina: !Equals [!Ref "AWS::Partition", "aws-cn"]
+# </#noparse>

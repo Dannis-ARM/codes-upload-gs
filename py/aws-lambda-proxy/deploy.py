@@ -1,7 +1,7 @@
 """
 Converts the deploy.sh script to a Python script for deploying the Lambda proxy.
 
-This script packages a Lambda function, uploads it and a CloudFormation template to S3,
+This script packages Lambda source files, uploads them and a CloudFormation template to S3,
 and then creates or updates the CloudFormation stack.
 """
 import argparse
@@ -43,13 +43,18 @@ def parse_arguments():
     parser.add_argument("subnet_ids", help="Comma-separated Subnet IDs for the Lambda.")
     return parser.parse_args()
 
-def package_lambda(source_file: Path, dist_dir: Path) -> Path:
-    """Packages the lambda source code into a zip file."""
-    logger.info("Packaging Lambda function...")
+def package_lambda(source_files: list[Path], dist_dir: Path, zip_name: str) -> Path:
+    """Packages lambda source code into a zip file."""
+    logger.info(f"Packaging Lambda function sources: {[f.name for f in source_files]}")
     dist_dir.mkdir(exist_ok=True)
-    zip_path = dist_dir / f"{source_file.stem}.zip"
+    zip_path = dist_dir / zip_name
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.write(source_file, arcname=source_file.name)
+        for source_file in source_files:
+            if source_file.exists():
+                zf.write(source_file, arcname=source_file.name)
+            else:
+                logger.error(f"Source file '{source_file}' not found during packaging.")
+                raise FileNotFoundError(f"Missing required source file: {source_file}")
     logger.info(f"Lambda function packaged at {zip_path}")
     return zip_path
 
@@ -72,8 +77,6 @@ def get_stack_parameters(s3_bucket, s3_code_key, update_worker_arn, fetch_worker
         {'ParameterKey': 'FetchWorkerLambdaArn', 'ParameterValue': fetch_worker_arn},
         {'ParameterKey': 'VpcId', 'ParameterValue': vpc_id},
         {'ParameterKey': 'SecurityGroupId', 'ParameterValue': security_group_id},
-        # The template expects a list, but the script passes a comma-separated string.
-        # The CLI handles conversion, but for boto3 we pass it as a string.
         {'ParameterKey': 'SubnetIds', 'ParameterValue': subnet_ids},
     ]
 
@@ -150,7 +153,7 @@ def main():
     """Main function to orchestrate the deployment."""
     args = parse_arguments()
     
-    # Store args in local variables for clarity and easier maintenance
+    # Store args in local variables
     stack_name = args.stack_name
     template_file_str = args.template_file
     s3_bucket = args.s3_bucket
@@ -161,26 +164,29 @@ def main():
     security_group_id = args.security_group_id
     subnet_ids = args.subnet_ids
 
-    # Define paths
-    source_file = Path("main.py")
+    # Define paths and file names
+    source_files = [Path("proxy.py"), Path("authorizer.py")]
     template_file = Path(template_file_str)
     dist_dir = Path("dist")
+    zip_file_name = "lambda_package.zip"
 
-    if not source_file.exists():
-        logger.error(f"Source file '{source_file}' not found.")
-        sys.exit(1)
+    # Validate source files exist
+    for f in source_files:
+        if not f.exists():
+            logger.error(f"Source file '{f}' not found in current directory.")
+            sys.exit(1)
+            
     if not template_file.exists():
         logger.error(f"Template file '{template_file}' not found.")
         sys.exit(1)
 
     # Define S3 keys
-    zip_file_name = "main.py.zip" # Keep consistent with shell script
     s3_code_key = f"lambda-code/{zip_file_name}"
     s3_template_key = f"cfn-templates/{template_file.name}"
     
     try:
         # 1. Package
-        zip_path = package_lambda(source_file, dist_dir)
+        zip_path = package_lambda(source_files, dist_dir, zip_file_name)
         
         # 2. Upload
         s3_client = boto3.client('s3', region_name=region)
@@ -220,9 +226,9 @@ def main():
     finally:
         # 4. Cleanup
         if dist_dir.exists():
-            logger.info("Cleaning up...")
+            logger.info("Cleaning up local artifact directory...")
             shutil.rmtree(dist_dir)
-            logger.info("Done.")
+            logger.info("Cleanup complete.")
 
 if __name__ == "__main__":
     main()
