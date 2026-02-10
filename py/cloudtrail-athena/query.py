@@ -65,30 +65,44 @@ class CloudTrailAthenaClient:
         print(f"--- Executing search in {region} from {start_utc} to {end_utc} ---")
         execution_id = self._execute_wait(sql, timeout=timeout)
         return self._get_full_results(execution_id)
-
-    def _execute_wait(self, query, timeout):
-        """Monitor Athena query status with timeout handling"""
+    
+    def _execute_wait(self, query, timeout, kms_key=None):
+        """
+        Monitor Athena query status with encryption.
+        :param kms_key: If provided, uses SSE_KMS. If None, uses SSE_S3.
+        """
         start_perf = time.perf_counter()
+        
+        # Define encryption configuration
+        encryption_config = {
+            'EncryptionOption': 'SSE_KMS' if kms_key else 'SSE_S3'
+        }
+        if kms_key:
+            encryption_config['KmsKey'] = kms_key
+
         response = self.client.start_query_execution(
             QueryString=query,
             QueryExecutionContext={'Database': self.database},
-            ResultConfiguration={'OutputLocation': self.s3_output_path}
+            ResultConfiguration={
+                'OutputLocation': self.s3_output_path,
+                'EncryptionConfiguration': encryption_config
+            }
         )
         qid = response['QueryExecutionId']
         
+        # ... (Polling logic remains the same) ...
         wait_time = 1
         while True:
             elapsed = time.perf_counter() - start_perf
             if elapsed > timeout:
                 self.client.stop_query_execution(QueryExecutionId=qid)
-                raise TimeoutError(f"Athena query {qid} timed out after {timeout}s.")
+                raise TimeoutError(f"Athena query {qid} timed out.")
 
             status_resp = self.client.get_query_execution(QueryExecutionId=qid)
             state = status_resp['QueryExecution']['Status']['State']
             
             if state == 'SUCCEEDED':
-                stats = status_resp['QueryExecution']['Statistics']
-                print(f"Success! Time: {time.perf_counter() - start_perf:.2f}s, Scanned: {stats.get('DataScannedInBytes', 0) / 1024**2:.2f} MB")
+                print(f"Success! (Encrypted) Time: {time.perf_counter() - start_perf:.2f}s")
                 return qid
             
             if state in ['FAILED', 'CANCELLED']:
@@ -130,8 +144,10 @@ CREATE EXTERNAL TABLE IF NOT EXISTS ${database}.${table_name} (
     errorMessage STRING
 )
 PARTITIONED BY (account_id string, region string, year string, month string, day string)
-ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
-LOCATION '${s3_log_path}'
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.CloudTrailSerDe'
+STORED AS INPUTFORMAT 'com.amazon.emr.cloudtrail.CloudTrailInputFormat'
+OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+LOCATION '${s3_log_path}''
 TBLPROPERTIES (
     'projection.enabled' = 'true',
     'projection.account_id.type' = 'injected',
