@@ -49,8 +49,7 @@ public class CloudTrailAthenaClient {
                 "database", database,
                 "table_name", tableName,
                 "s3_log_path", s3LogPath,
-                "year_range", yearRange
-        ));
+                "year_range", yearRange));
 
         System.out.println("--- Updating Athena table for China Regions ---");
         executeAndVisibleWait(sql, 60);
@@ -59,11 +58,12 @@ public class CloudTrailAthenaClient {
     /**
      * 执行查询并返回结果列表
      */
-    public List<List<String>> queryEvents(String queryTemplate, String accessKeyId, String accountId, 
-                                          String region, String startUtc, String endUtc) {
-        
-        String finalEndUtc = (endUtc == null) ? 
-                Instant.now().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT) : endUtc;
+    public List<List<String>> queryEvents(String queryTemplate, String accessKeyId, String accountId,
+            String region, String startUtc, String endUtc) {
+
+        String finalEndUtc = (endUtc == null)
+                ? Instant.now().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT)
+                : endUtc;
 
         // 解析年份和月份用于分区裁剪
         Instant startTs = Instant.parse(startUtc);
@@ -78,8 +78,7 @@ public class CloudTrailAthenaClient {
                 "month", String.format("%02d", dateTime.getMonthValue()),
                 "access_key_id", accessKeyId,
                 "start_utc", startUtc,
-                "end_utc", finalEndUtc
-        ));
+                "end_utc", finalEndUtc));
 
         System.out.printf("--- Executing search in %s from %s to %s ---%n", region, startUtc, finalEndUtc);
         String queryExecutionId = executeAndVisibleWait(sql, 300);
@@ -99,12 +98,12 @@ public class CloudTrailAthenaClient {
                 .build();
 
         String queryExecutionId = athenaClient.startQueryExecution(startRequest).queryExecutionId();
-        
+
         long startTime = System.currentTimeMillis();
         while (System.currentTimeMillis() - startTime < timeoutSeconds * 1000L) {
             GetQueryExecutionResponse statusResp = athenaClient.getQueryExecution(
                     GetQueryExecutionRequest.builder().queryExecutionId(queryExecutionId).build());
-            
+
             QueryExecutionStatus status = statusResp.queryExecution().status();
             QueryExecutionState state = status.state();
 
@@ -114,26 +113,65 @@ public class CloudTrailAthenaClient {
                 throw new RuntimeException("Athena query failed: " + status.stateChangeReason());
             }
 
-            try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
-        
+
         athenaClient.stopQueryExecution(StopQueryExecutionRequest.builder().queryExecutionId(queryExecutionId).build());
         throw new RuntimeException("Query timed out after " + timeoutSeconds + " seconds");
     }
 
-    private List<List<String>> getFullResults(String queryExecutionId) {
-        List<List<String>> results = new ArrayList<>();
+    public record CloudTrailEvent(
+        String eventTime,
+        String eventName,
+        String userArn,
+        String sourceIpAddress,
+        String errorCode
+    ) {
+        // 可以在内部添加一些辅助方法，比如转换为 Instant
+        public Instant getInstant() {
+            return Instant.parse(eventTime);
+        }
+    }
+
+    private List<CloudTrailEvent> getFullResults(String queryExecutionId) {
+        List<CloudTrailEvent> events = new ArrayList<>();
+
+        // 使用分页器获取结果
         GetQueryResultsIterable responses = athenaClient.getQueryResultsPaginator(
                 GetQueryResultsRequest.builder().queryExecutionId(queryExecutionId).build());
 
+        boolean isFirstRow = true;
+
         for (GetQueryResultsResponse response : responses) {
             for (Row row : response.resultSet().rows()) {
-                results.add(row.data().stream()
+                // 跳过 CSV 表头（Athena 查询结果的第一行通常是字段名）
+                if (isFirstRow) {
+                    isFirstRow = false;
+                    continue;
+                }
+
+                List<String> columns = row.data().stream()
                         .map(Datum::varCharValue)
                         .map(val -> val == null ? "" : val)
-                        .collect(Collectors.toList()));
+                        .toList();
+
+                // 根据 SQL 模板中的字段顺序进行映射:
+                // SELECT eventTime, eventName, userIdentity.arn, sourceIPAddress, errorCode
+                if (columns.size() >= 5) {
+                    events.add(new CloudTrailEvent(
+                            columns.get(0), // eventTime
+                            columns.get(1), // eventName
+                            columns.get(2), // userArn
+                            columns.get(3), // sourceIpAddress
+                            columns.get(4) // errorCode
+                    ));
+                }
             }
         }
-        return results;
+        return events;
     }
 }
