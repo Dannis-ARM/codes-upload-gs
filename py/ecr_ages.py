@@ -1,8 +1,14 @@
 import boto3
 from datetime import datetime, timezone, timedelta
 
-# Initialize ECR client (assumes default AWS credentials/profile/region)
-client = boto3.client('ecr')
+# Initialize clients
+ecr_client = boto3.client('ecr')
+sts_client = boto3.client('sts')
+
+# Get current AWS account ID and region dynamically
+identity = sts_client.get_caller_identity()
+ACCOUNT_ID = identity['Account']
+REGION = ecr_client.meta.region_name  # or boto3.session.Session().region_name
 
 # Threshold: images older than 90 days
 OLD_THRESHOLD_DAYS = 90
@@ -12,7 +18,7 @@ threshold_date = now - timedelta(days=OLD_THRESHOLD_DAYS)
 def paginate_list_repos():
     """List all repositories with pagination."""
     repos = []
-    paginator = client.get_paginator('list_repositories')
+    paginator = ecr_client.get_paginator('list_repositories')
     for page in paginator.paginate():
         repos.extend(page.get('repositories', []))
     return repos
@@ -20,11 +26,11 @@ def paginate_list_repos():
 def get_tagged_images_in_repo(repo_name):
     """
     Get all tagged image IDs using list_images (filter TAGGED),
-    then describe them to get imagePushedAt.
+    then describe them to get imagePushedAt and build docker pull/push URI.
     Handles pagination.
     """
     image_ids = []
-    paginator = client.get_paginator('list_images')
+    paginator = ecr_client.get_paginator('list_images')
     for page in paginator.paginate(
         repositoryName=repo_name,
         filter={'tagStatus': 'TAGGED'},
@@ -35,12 +41,11 @@ def get_tagged_images_in_repo(repo_name):
     if not image_ids:
         return []
 
-    # Now describe images to get details (including imagePushedAt)
-    # describe_images supports up to 100 imageIds per call
+    # Describe images in batches (max 100 per call)
     old_images = []
     for i in range(0, len(image_ids), 100):
         batch = image_ids[i:i+100]
-        response = client.describe_images(
+        response = ecr_client.describe_images(
             repositoryName=repo_name,
             imageIds=batch
         )
@@ -52,9 +57,15 @@ def get_tagged_images_in_repo(repo_name):
 
             age_days = (now - pushed_at).days
             if pushed_at < threshold_date:
+                # Construct standard ECR image URI using the first tag
+                base_uri = f"{ACCOUNT_ID}.dkr.ecr.{REGION}.amazonaws.com/{repo_name}"
+                representative_tag = tags[0]  # use first tag as representative
+                uri_tagged = f"{base_uri}:{representative_tag}"
+
                 old_images.append({
-                    'tags': tags,
-                    'digest': detail['imageDigest'],
+                    'uri_tagged': uri_tagged,          # e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:v1.0
+                    'tags': tags,                      # all tags (list)
+                    'digest': detail.get('imageDigest'),
                     'pushed_at': pushed_at.strftime('%Y-%m-%d %H:%M:%S UTC'),
                     'age_days': age_days
                 })
@@ -62,16 +73,18 @@ def get_tagged_images_in_repo(repo_name):
     return old_images
 
 # Main logic
-print("Scanning all ECR repositories for images older than {} days...\n".format(OLD_THRESHOLD_DAYS))
+print(f"Scanning all ECR repositories in account {ACCOUNT_ID} ({REGION}) "
+      f"for images older than {OLD_THRESHOLD_DAYS} days...\n")
 
 repositories = paginate_list_repos()
 
 if not repositories:
-    print("No repositories found.")
+    print("No repositories found in this region/account.")
 else:
     for repo in repositories:
         repo_name = repo['repositoryName']
-        print(f"Repository: {repo_name}")
+        repo_arn = repo.get('repositoryArn', 'N/A')
+        print(f"Repository: {repo_name}  (ARN: {repo_arn})")
 
         old_images = get_tagged_images_in_repo(repo_name)
 
@@ -79,8 +92,9 @@ else:
             print(f"  Found {len(old_images)} tagged images older than {OLD_THRESHOLD_DAYS} days:")
             for img in old_images:
                 tags_str = ', '.join(img['tags'])
-                print(f"    - Tags: {tags_str}")
-                print(f"      Digest: {img['digest'][:20]}...")  # shorten for readability
+                print(f"    - URI: {img['uri_tagged']}")
+                print(f"      Tags: {tags_str}")
+                print(f"      Digest: {img['digest'][:20]}...")  # shortened for readability
                 print(f"      Pushed: {img['pushed_at']}")
                 print(f"      Age: {img['age_days']} days")
                 print()
