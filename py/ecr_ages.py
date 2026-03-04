@@ -1,105 +1,99 @@
 import boto3
-from datetime import datetime, timezone, timedelta
+import json
+import datetime
+import logging
+from botocore.exceptions import ClientError
 
-# Initialize clients
-ecr_client = boto3.client('ecr')
-sts_client = boto3.client('sts')
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-# Get current AWS account ID and region dynamically
-identity = sts_client.get_caller_identity()
-ACCOUNT_ID = identity['Account']
-REGION = ecr_client.meta.region_name  # or boto3.session.Session().region_name
+def get_env_info(context):
+    """Extract Region and Account ID from Lambda context."""
+    try:
+        arn_parts = context.invoked_function_arn.split(':')
+        return {
+            'region': arn_parts[3],
+            'account_id': arn_parts[4]
+        }
+    except (IndexError, AttributeError) as e:
+        logger.error(f"Failed to parse context ARN: {e}")
+        raise
 
-# Threshold: images older than 90 days
-OLD_THRESHOLD_DAYS = 90
-now = datetime.now(timezone.utc)
-threshold_date = now - timedelta(days=OLD_THRESHOLD_DAYS)
+def is_repo_compliant(ecr_client, repo_name, max_days=90):
+    """Check all images in a repository for compliance based on push date."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    paginator = ecr_client.get_paginator('describe_images')
+    
+    try:
+        for page in paginator.paginate(repositoryName=repo_name):
+            for image in page.get('imageDetails', []):
+                push_date = image.get('imagePushedAt')
+                if not push_date:
+                    continue
+                
+                age = (now - push_date).days
+                if age > max_days:
+                    msg = f"Non-compliant: Image {image.get('imageDigest')} pushed {age} days ago."
+                    return False, msg
+        
+        return True, "Compliant: All images are within the 90-day limit."
+    except ClientError as e:
+        logger.error(f"Error describing images for repo {repo_name}: {e}")
+        return None, f"Error: {str(e)}"
 
-def paginate_list_repos():
-    """List all repositories with pagination."""
-    repos = []
-    paginator = ecr_client.get_paginator('list_repositories')
-    for page in paginator.paginate():
-        repos.extend(page.get('repositories', []))
-    return repos
-
-def get_tagged_images_in_repo(repo_name):
-    """
-    Get all tagged image IDs using list_images (filter TAGGED),
-    then describe them to get imagePushedAt and build docker pull/push URI.
-    Handles pagination.
-    """
-    image_ids = []
-    paginator = ecr_client.get_paginator('list_images')
-    for page in paginator.paginate(
-        repositoryName=repo_name,
-        filter={'tagStatus': 'TAGGED'},
-        PaginationConfig={'PageSize': 1000}
-    ):
-        image_ids.extend(page.get('imageIds', []))
-
-    if not image_ids:
-        return []
-
-    # Describe images in batches (max 100 per call)
-    old_images = []
-    for i in range(0, len(image_ids), 100):
-        batch = image_ids[i:i+100]
-        response = ecr_client.describe_images(
-            repositoryName=repo_name,
-            imageIds=batch
+def submit_evaluation(config_client, resource_id, compliance_type, annotation, event):
+    """Submit the evaluation result back to AWS Config."""
+    try:
+        invoking_event = json.loads(event['invoking_event'])
+        result_token = event['resultToken']
+        
+        config_client.put_evaluations(
+            Evaluations=[{
+                'ComplianceResourceType': 'AWS::ECR::Repository',
+                'ComplianceResourceId': resource_id,
+                'ComplianceType': compliance_type,
+                'Annotation': annotation,
+                'OrderingTimestamp': invoking_event['notificationCreationTime']
+            }],
+            ResultToken=result_token
         )
-        for detail in response.get('imageDetails', []):
-            pushed_at = detail.get('imagePushedAt')
-            tags = detail.get('imageTags', [])
-            if not pushed_at or not tags:
-                continue
+        logger.info(f"Successfully submitted {compliance_type} for {resource_id}")
+    except ClientError as e:
+        logger.error(f"Failed to submit evaluation for {resource_id}: {e}")
 
-            age_days = (now - pushed_at).days
-            if pushed_at < threshold_date:
-                # Construct standard ECR image URI using the first tag
-                base_uri = f"{ACCOUNT_ID}.dkr.ecr.{REGION}.amazonaws.com/{repo_name}"
-                representative_tag = tags[0]  # use first tag as representative
-                uri_tagged = f"{base_uri}:{representative_tag}"
+# --- Main Entry Point ---
+def lambda_handler(event, context):
+    """Main Lambda function for AWS Config Custom Rule."""
+    logger.info("Starting ECR compliance scan...")
+    
+    # 1. Setup environment and clients
+    env = get_env_info(context)
+    ecr_client = boto3.client('ecr', region_name=env['region'])
+    config_client = boto3.client('config', region_name=env['region'])
+    
+    # 2. List all ECR repositories using paginator
+    try:
+        repo_paginator = ecr_client.get_paginator('describe_repositories')
+        for repo_page in repo_paginator.paginate():
+            for repo in repo_page.get('repositories', []):
+                repo_name = repo['repositoryName']
+                
+                # 3. Perform the compliance check
+                is_compliant, message = is_repo_compliant(ecr_client, repo_name)
+                
+                # Skip if there was an error during image check
+                if is_compliant is None:
+                    continue
+                
+                status = 'COMPLIANT' if is_compliant else 'NON_COMPLIANT'
+                
+                # 4. Report results
+                submit_evaluation(config_client, repo_name, status, message, event)
+                
+    except ClientError as e:
+        logger.error(f"Critical error listing repositories: {e}")
+        return {'statusCode': 500, 'body': str(e)}
 
-                old_images.append({
-                    'uri_tagged': uri_tagged,          # e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:v1.0
-                    'tags': tags,                      # all tags (list)
-                    'digest': detail.get('imageDigest'),
-                    'pushed_at': pushed_at.strftime('%Y-%m-%d %H:%M:%S UTC'),
-                    'age_days': age_days
-                })
-
-    return old_images
-
-# Main logic
-print(f"Scanning all ECR repositories in account {ACCOUNT_ID} ({REGION}) "
-      f"for images older than {OLD_THRESHOLD_DAYS} days...\n")
-
-repositories = paginate_list_repos()
-
-if not repositories:
-    print("No repositories found in this region/account.")
-else:
-    for repo in repositories:
-        repo_name = repo['repositoryName']
-        repo_arn = repo.get('repositoryArn', 'N/A')
-        print(f"Repository: {repo_name}  (ARN: {repo_arn})")
-
-        old_images = get_tagged_images_in_repo(repo_name)
-
-        if old_images:
-            print(f"  Found {len(old_images)} tagged images older than {OLD_THRESHOLD_DAYS} days:")
-            for img in old_images:
-                tags_str = ', '.join(img['tags'])
-                print(f"    - URI: {img['uri_tagged']}")
-                print(f"      Tags: {tags_str}")
-                print(f"      Digest: {img['digest'][:20]}...")  # shortened for readability
-                print(f"      Pushed: {img['pushed_at']}")
-                print(f"      Age: {img['age_days']} days")
-                print()
-        else:
-            print("  No old tagged images found (or no tagged images at all).")
-        print("-" * 60)
-
-print("Scan complete.")
+    logger.info("Scan completed successfully.")
+    return {'statusCode': 200, 'body': 'Evaluation complete'}
