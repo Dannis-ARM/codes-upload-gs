@@ -5,17 +5,18 @@ from typing import Dict, Any, Set, Tuple, List, Optional
 from botocore.exceptions import ClientError
 import logging
 
-# Use Any for boto3 clients (most practical approach)
+# Use Any for boto3 clients (practical approach)
 from typing import Any as Boto3Client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 MAX_IMAGE_AGE_DAYS = 90
+RESOURCE_TYPE = "AWS::ECS::Service"
 
 
 # ────────────────────────────────────────────────
-# Environment & Client Initialization
+# Environment & Clients
 # ────────────────────────────────────────────────
 
 def get_lambda_env_info(context: Any) -> Dict[str, str]:
@@ -32,7 +33,7 @@ def get_lambda_env_info(context: Any) -> Dict[str, str]:
 
 
 def initialize_clients(region: str) -> Dict[str, Boto3Client]:
-    """Create boto3 clients for ECS, ECR, and Config."""
+    """Create boto3 clients."""
     return {
         "ecs": boto3.client("ecs", region_name=region),
         "ecr": boto3.client("ecr", region_name=region),
@@ -41,46 +42,61 @@ def initialize_clients(region: str) -> Dict[str, Boto3Client]:
 
 
 # ────────────────────────────────────────────────
-# Event & Resource Parsing
+# ECS Service Discovery
 # ────────────────────────────────────────────────
 
-def parse_invoking_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse the invoking_event JSON string from AWS Config event."""
-    try:
-        return json.loads(event["invoking_event"])
-    except (KeyError, json.JSONDecodeError) as exc:
-        logger.error("Failed to parse invoking_event", exc_info=True)
-        raise ValueError("Invalid or missing invoking_event") from exc
+def list_all_ecs_clusters(ecs_client: Boto3Client) -> List[str]:
+    """List all ECS cluster ARNs in the account/region."""
+    clusters: List[str] = []
+    paginator = ecs_client.get_paginator("list_clusters")
+    for page in paginator.paginate():
+        clusters.extend(page.get("clusterArns", []))
+    return clusters
 
 
-def extract_evaluated_resource(invoking_event: Dict[str, Any]) -> Dict[str, str]:
-    """Extract resource type, ID and ARN from configurationItem."""
-    item = invoking_event.get("configurationItem", {})
+def list_services_in_cluster(
+    ecs_client: Boto3Client, cluster_arn: str
+) -> List[str]:
+    """List all active service ARNs in a given cluster."""
+    services: List[str] = []
+    paginator = ecs_client.get_paginator("list_services")
+    for page in paginator.paginate(cluster=cluster_arn):
+        services.extend(page.get("serviceArns", []))
+    return services
+
+
+def get_service_name_from_arn(service_arn: str) -> Optional[str]:
+    """Extract service name from full ARN."""
+    parts = service_arn.split("/")
+    return parts[-1] if len(parts) >= 2 else None
+
+
+def build_service_evaluation(
+    service_arn: str,
+    compliance: str,
+    annotation: str,
+    ordering_timestamp: str,
+) -> Dict[str, Any]:
+    """Build one evaluation item for put_evaluations."""
     return {
-        "type": item.get("resourceType", ""),
-        "id": item.get("resourceId", ""),
-        "arn": item.get("ARN", ""),
+        "ComplianceResourceType": RESOURCE_TYPE,
+        "ComplianceResourceId": service_arn,  # 使用完整 ARN 作為 resourceId
+        "ComplianceType": compliance,
+        "Annotation": annotation[:400],
+        "OrderingTimestamp": ordering_timestamp,
     }
 
 
-def is_supported_resource_type(resource_type: str) -> bool:
-    """Check if the resource type is supported by this rule."""
-    return resource_type == "AWS::ECS::Service"
-
-
 # ────────────────────────────────────────────────
-# ECS Service → Task Definition → Images
+# Core logic (same as before)
 # ────────────────────────────────────────────────
 
 def parse_cluster_and_service_from_arn(service_arn: str) -> Tuple[Optional[str], Optional[str]]:
-    """Parse cluster name and service name from ECS service ARN."""
     if not service_arn or ":" not in service_arn:
         return None, None
-
     parts = service_arn.split("/")
     if len(parts) < 3:
         return None, None
-
     return parts[-2], parts[-1]
 
 
@@ -89,224 +105,173 @@ def get_primary_task_definition_arn(
     cluster_arn: str,
     service_name: str,
 ) -> Optional[str]:
-    """Retrieve task definition ARN from the primary deployment."""
     try:
-        response = ecs_client.describe_services(cluster=cluster_arn, services=[service_name])
-        services = response.get("services", [])
-        if not services:
-            logger.info(f"No active service found: {service_name}")
+        resp = ecs_client.describe_services(cluster=cluster_arn, services=[service_name])
+        services = resp.get("services", [])
+        if not services or services[0]["status"] != "ACTIVE":
             return None
 
-        service = services[0]
-        if service["status"] != "ACTIVE":
-            return None
-
-        for deployment in service.get("deployments", []):
-            if deployment["status"] == "PRIMARY":
-                return deployment["taskDefinition"]
+        for dep in services[0].get("deployments", []):
+            if dep["status"] == "PRIMARY":
+                return dep["taskDefinition"]
         return None
-
     except ClientError as exc:
-        logger.error(f"Failed to describe service {service_name}", exc_info=True)
-        raise
+        logger.warning(f"Failed to describe service {service_name} in {cluster_arn}", exc_info=True)
+        return None
 
 
 def extract_ecr_image_uris_from_task_definition(
-    ecs_client: Boto3Client,
-    task_def_arn: str,
+    ecs_client: Boto3Client, task_def_arn: str
 ) -> Set[str]:
-    """Extract all ECR image URIs from a task definition."""
     try:
-        response = ecs_client.describe_task_definition(taskDefinition=task_def_arn)
-        container_defs = response["taskDefinition"].get("containerDefinitions", [])
-
-        ecr_images: Set[str] = set()
-        for container in container_defs:
-            image = container.get("image", "")
-            if ".dkr.ecr." in image and ".amazonaws.com" in image:
-                ecr_images.add(image)
-        return ecr_images
-
+        resp = ecs_client.describe_task_definition(taskDefinition=task_def_arn)
+        images: Set[str] = set()
+        for c in resp["taskDefinition"].get("containerDefinitions", []):
+            img = c.get("image", "")
+            if ".dkr.ecr." in img and ".amazonaws.com" in img:
+                images.add(img)
+        return images
     except ClientError as exc:
-        logger.error(f"Failed to describe task definition {task_def_arn}", exc_info=True)
-        raise
-
-
-def build_cluster_arn(region: str, account_id: str, cluster_name: str) -> str:
-    """Construct full cluster ARN from name, region and account."""
-    return f"arn:aws:ecs:{region}:{account_id}:cluster/{cluster_name}"
+        logger.warning(f"Failed to describe task def {task_def_arn}", exc_info=True)
+        return set()
 
 
 def fetch_currently_used_ecr_images(
     ecs_client: Boto3Client,
-    service_arn_or_name: str,
+    service_arn: str,
     region: str,
     account_id: str,
 ) -> Set[str]:
-    """Fetch ECR image URIs used by the primary deployment of an ECS service."""
-    cluster_name, service_name = parse_cluster_and_service_from_arn(service_arn_or_name)
+    cluster_name, service_name = parse_cluster_and_service_from_arn(service_arn)
     if not cluster_name or not service_name:
-        logger.warning(f"Cannot parse service identifier: {service_arn_or_name}")
         return set()
 
-    cluster_arn = build_cluster_arn(region, account_id, cluster_name)
-
-    task_def_arn = get_primary_task_definition_arn(ecs_client, cluster_arn, service_name)
-    if not task_def_arn:
+    cluster_arn = f"arn:aws:ecs:{region}:{account_id}:cluster/{cluster_name}"
+    td_arn = get_primary_task_definition_arn(ecs_client, cluster_arn, service_name)
+    if not td_arn:
         return set()
 
-    return extract_ecr_image_uris_from_task_definition(ecs_client, task_def_arn)
+    return extract_ecr_image_uris_from_task_definition(ecs_client, td_arn)
 
-
-# ────────────────────────────────────────────────
-# ECR Image Age Check
-# ────────────────────────────────────────────────
 
 def parse_repo_and_tag_from_image_uri(image_uri: str) -> Tuple[Optional[str], str]:
-    """Parse repository name and tag from ECR image URI."""
     try:
         repo_part = image_uri.split("/", 1)[1]
         if ":" in repo_part:
-            repo_name, tag = repo_part.rsplit(":", 1)
-        else:
-            repo_name = repo_part
-            tag = "latest"
-        return repo_name, tag
+            return repo_part.rsplit(":", 1)
+        return repo_part, "latest"
     except Exception:
         return None, "unknown"
 
 
 def is_ecr_image_older_than_threshold(
-    ecr_client: Boto3Client,
-    image_uri: str,
-    max_days: int = MAX_IMAGE_AGE_DAYS,
+    ecr_client: Boto3Client, image_uri: str, max_days: int = MAX_IMAGE_AGE_DAYS
 ) -> Tuple[bool, str]:
-    """Check if ECR image push date exceeds the allowed threshold."""
     repo_name, tag = parse_repo_and_tag_from_image_uri(image_uri)
     if not repo_name:
-        return True, f"Cannot parse ECR image URI: {image_uri}"
+        return True, f"Invalid ECR URI: {image_uri}"
 
     now = datetime.datetime.now(datetime.timezone.utc)
-
     try:
         paginator = ecr_client.get_paginator("describe_images")
         for page in paginator.paginate(repositoryName=repo_name):
             for detail in page.get("imageDetails", []):
-                for img_tag in detail.get("imageTags", []):
-                    if img_tag == tag:
-                        age_days = (now - detail["imagePushedAt"]).days
-                        if age_days > max_days:
-                            return True, f"{image_uri} is {age_days} days old (> {max_days})"
-                        return False, f"{image_uri} is {age_days} days old"
-        return True, f"Tag '{tag}' not found in repository: {repo_name}"
-
+                if tag in detail.get("imageTags", []):
+                    age = (now - detail["imagePushedAt"]).days
+                    if age > max_days:
+                        return True, f"{image_uri} is {age} days old (> {max_days})"
+                    return False, f"{image_uri} is {age} days old"
+        return True, f"Tag {tag} not found: {image_uri}"
     except ClientError as exc:
-        logger.error(f"Failed to describe images in {repo_name}", exc_info=True)
-        return True, f"Failed to check image {image_uri}: {exc.response['Error']['Message']}"
+        return True, f"ECR error for {image_uri}: {exc.response['Error']['Message']}"
 
 
-def evaluate_all_used_images(
-    ecr_client: Boto3Client,
-    image_uris: Set[str],
+def evaluate_images(
+    ecr_client: Boto3Client, image_uris: Set[str]
 ) -> Tuple[str, str]:
-    """Evaluate compliance of all used ECR images."""
-    violations: List[str] = []
-
+    violations = []
     for uri in image_uris:
-        is_violation, message = is_ecr_image_older_than_threshold(ecr_client, uri)
-        if is_violation:
-            violations.append(message)
+        old, msg = is_ecr_image_older_than_threshold(ecr_client, uri)
+        if old:
+            violations.append(msg)
 
     if violations:
         return "NON_COMPLIANT", "; ".join(violations)[:500]
-
     count = len(image_uris)
-    msg = (
-        f"All {count} ECR images are within {MAX_IMAGE_AGE_DAYS} days"
-        if count > 0
-        else "No ECR images in use"
-    )
+    msg = f"All {count} ECR images ≤ {MAX_IMAGE_AGE_DAYS} days" if count else "No ECR images in use"
     return "COMPLIANT", msg
 
 
 # ────────────────────────────────────────────────
-# Submit Evaluation
+# Submit to Config
 # ────────────────────────────────────────────────
 
-def submit_config_evaluation(
+def submit_evaluations(
     config_client: Boto3Client,
-    resource_type: str,
-    resource_id: str,
-    compliance_type: str,
-    annotation: str,
-    ordering_timestamp: str,
-    result_token: str,
+    evaluations: List[Dict[str, Any]],
+    result_token: Optional[str] = None,
 ) -> None:
-    """Submit evaluation result to AWS Config."""
+    """Submit batch of evaluations to AWS Config."""
+    if not evaluations:
+        return
+
     try:
         config_client.put_evaluations(
-            Evaluations=[
-                {
-                    "ComplianceResourceType": resource_type,
-                    "ComplianceResourceId": resource_id,
-                    "ComplianceType": compliance_type,
-                    "Annotation": annotation[:400],
-                    "OrderingTimestamp": ordering_timestamp,
-                }
-            ],
-            ResultToken=result_token,
+            Evaluations=evaluations,
+            ResultToken=result_token or "scheduled-evaluation",  # scheduled 時可自訂或留空
         )
-        logger.info(f"Evaluation submitted: {resource_id} → {compliance_type}")
+        logger.info(f"Submitted {len(evaluations)} evaluations to Config")
     except ClientError as exc:
-        logger.error(f"Failed to submit evaluation for {resource_id}", exc_info=True)
+        logger.error("Failed to submit evaluations to Config", exc_info=True)
 
 
 # ────────────────────────────────────────────────
-# Lambda Handler
+# Main Handler - Scheduled Event
 # ────────────────────────────────────────────────
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda entry point for Config custom rule."""
-    env_info = get_lambda_env_info(context)
-    region = env_info["region"]
-    account_id = env_info["account_id"]
-
+    """Entry point for scheduled Lambda (every 12 hours)."""
+    env = get_lambda_env_info(context)
+    region = env["region"]
+    account_id = env["account_id"]
     clients = initialize_clients(region)
 
-    invoking_event = parse_invoking_event(event)
-    resource = extract_evaluated_resource(invoking_event)
+    # 從 event 拿 timestamp，如果沒有就用現在時間
+    try:
+        invoking = json.loads(event.get("invokingEvent", "{}"))
+        ordering_ts = invoking.get("notificationCreationTime", datetime.datetime.utcnow().isoformat() + "Z")
+    except Exception:
+        ordering_ts = datetime.datetime.utcnow().isoformat() + "Z"
 
-    if not is_supported_resource_type(resource["type"]):
-        annotation = f"This rule only supports AWS::ECS::Service (got {resource['type']})"
-        submit_config_evaluation(
-            clients["config"],
-            resource["type"],
-            resource["id"],
-            "NOT_APPLICABLE",
-            annotation,
-            invoking_event["notificationCreationTime"],
-            event["resultToken"],
-        )
-        return {"statusCode": 200}
+    evaluations: List[Dict[str, Any]] = []
 
-    # Core logic - pass region & account_id explicitly
-    used_ecr_images = fetch_currently_used_ecr_images(
-        ecs_client=clients["ecs"],
-        service_arn_or_name=resource["arn"] or resource["id"],
-        region=region,
-        account_id=account_id,
-    )
+    # 掃描所有 cluster & service
+    clusters = list_all_ecs_clusters(clients["ecs"])
+    logger.info(f"Found {len(clusters)} ECS clusters")
 
-    compliance, annotation = evaluate_all_used_images(clients["ecr"], used_ecr_images)
+    for cluster_arn in clusters:
+        service_arns = list_services_in_cluster(clients["ecs"], cluster_arn)
+        logger.info(f"Cluster {cluster_arn} has {len(service_arns)} services")
 
-    submit_config_evaluation(
-        clients["config"],
-        resource["type"],
-        resource["id"],
-        compliance,
-        annotation,
-        invoking_event["notificationCreationTime"],
-        event["resultToken"],
-    )
+        for svc_arn in service_arns:
+            images = fetch_currently_used_ecr_images(
+                clients["ecs"], svc_arn, region, account_id
+            )
 
-    return {"statusCode": 200, "body": "Evaluation completed"}
+            compliance, annotation = evaluate_images(clients["ecr"], images)
+
+            eval_item = build_service_evaluation(
+                service_arn=svc_arn,
+                compliance=compliance,
+                annotation=annotation,
+                ordering_timestamp=ordering_ts,
+            )
+            evaluations.append(eval_item)
+
+    # 批量送出
+    submit_evaluations(clients["config"], evaluations)
+
+    return {
+        "statusCode": 200,
+        "body": f"Processed {len(evaluations)} ECS services"
+    }
