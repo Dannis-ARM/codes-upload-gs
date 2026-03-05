@@ -5,6 +5,9 @@ from typing import Dict, Any, Set, Tuple, List, Optional
 from botocore.exceptions import ClientError
 import logging
 
+# Use Any for boto3 clients (most practical approach)
+from typing import Any as Boto3Client
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -28,7 +31,7 @@ def get_lambda_env_info(context: Any) -> Dict[str, str]:
         raise ValueError("Invalid Lambda context ARN") from exc
 
 
-def initialize_clients(region: str) -> Dict[str, boto3.client]:
+def initialize_clients(region: str) -> Dict[str, Boto3Client]:
     """Create boto3 clients for ECS, ECR, and Config."""
     return {
         "ecs": boto3.client("ecs", region_name=region),
@@ -51,7 +54,7 @@ def parse_invoking_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def extract_evaluated_resource(invoking_event: Dict[str, Any]) -> Dict[str, str]:
-    """Extract resource type and ID from configurationItem."""
+    """Extract resource type, ID and ARN from configurationItem."""
     item = invoking_event.get("configurationItem", {})
     return {
         "type": item.get("resourceType", ""),
@@ -82,11 +85,11 @@ def parse_cluster_and_service_from_arn(service_arn: str) -> Tuple[Optional[str],
 
 
 def get_primary_task_definition_arn(
-    ecs_client: boto3.client,
+    ecs_client: Boto3Client,
     cluster_arn: str,
     service_name: str,
 ) -> Optional[str]:
-    """Retrieve the task definition ARN from the primary deployment of the service."""
+    """Retrieve task definition ARN from the primary deployment."""
     try:
         response = ecs_client.describe_services(cluster=cluster_arn, services=[service_name])
         services = response.get("services", [])
@@ -101,8 +104,6 @@ def get_primary_task_definition_arn(
         for deployment in service.get("deployments", []):
             if deployment["status"] == "PRIMARY":
                 return deployment["taskDefinition"]
-
-        logger.info(f"No PRIMARY deployment found for service: {service_name}")
         return None
 
     except ClientError as exc:
@@ -111,7 +112,8 @@ def get_primary_task_definition_arn(
 
 
 def extract_ecr_image_uris_from_task_definition(
-    ecs_client: boto3.client, task_def_arn: str
+    ecs_client: Boto3Client,
+    task_def_arn: str,
 ) -> Set[str]:
     """Extract all ECR image URIs from a task definition."""
     try:
@@ -123,7 +125,6 @@ def extract_ecr_image_uris_from_task_definition(
             image = container.get("image", "")
             if ".dkr.ecr." in image and ".amazonaws.com" in image:
                 ecr_images.add(image)
-
         return ecr_images
 
     except ClientError as exc:
@@ -131,25 +132,24 @@ def extract_ecr_image_uris_from_task_definition(
         raise
 
 
+def build_cluster_arn(region: str, account_id: str, cluster_name: str) -> str:
+    """Construct full cluster ARN from name, region and account."""
+    return f"arn:aws:ecs:{region}:{account_id}:cluster/{cluster_name}"
+
+
 def fetch_currently_used_ecr_images(
-    ecs_client: boto3.client, service_arn_or_name: str
+    ecs_client: Boto3Client,
+    service_arn_or_name: str,
+    region: str,
+    account_id: str,
 ) -> Set[str]:
-    """Fetch all ECR image URIs currently used by the primary deployment of an ECS service."""
+    """Fetch ECR image URIs used by the primary deployment of an ECS service."""
     cluster_name, service_name = parse_cluster_and_service_from_arn(service_arn_or_name)
     if not cluster_name or not service_name:
-        if "/" in service_arn_or_name:
-            # Fallback: assume it's cluster/service format
-            parts = service_arn_or_name.split("/", 1)
-            cluster_name, service_name = parts[0], parts[1]
-        else:
-            logger.warning(f"Invalid service identifier: {service_arn_or_name}")
-            return set()
+        logger.warning(f"Cannot parse service identifier: {service_arn_or_name}")
+        return set()
 
-    # Build cluster ARN
-    session = boto3.session.Session()
-    region = session.region_name
-    account_id = session.client("sts").get_caller_identity()["Account"]
-    cluster_arn = f"arn:aws:ecs:{region}:{account_id}:cluster/{cluster_name}"
+    cluster_arn = build_cluster_arn(region, account_id, cluster_name)
 
     task_def_arn = get_primary_task_definition_arn(ecs_client, cluster_arn, service_name)
     if not task_def_arn:
@@ -172,14 +172,16 @@ def parse_repo_and_tag_from_image_uri(image_uri: str) -> Tuple[Optional[str], st
             repo_name = repo_part
             tag = "latest"
         return repo_name, tag
-    except (IndexError, ValueError):
+    except Exception:
         return None, "unknown"
 
 
 def is_ecr_image_older_than_threshold(
-    ecr_client: boto3.client, image_uri: str, max_days: int = MAX_IMAGE_AGE_DAYS
+    ecr_client: Boto3Client,
+    image_uri: str,
+    max_days: int = MAX_IMAGE_AGE_DAYS,
 ) -> Tuple[bool, str]:
-    """Check if an ECR image is older than the allowed threshold."""
+    """Check if ECR image push date exceeds the allowed threshold."""
     repo_name, tag = parse_repo_and_tag_from_image_uri(image_uri)
     if not repo_name:
         return True, f"Cannot parse ECR image URI: {image_uri}"
@@ -196,7 +198,6 @@ def is_ecr_image_older_than_threshold(
                         if age_days > max_days:
                             return True, f"{image_uri} is {age_days} days old (> {max_days})"
                         return False, f"{image_uri} is {age_days} days old"
-
         return True, f"Tag '{tag}' not found in repository: {repo_name}"
 
     except ClientError as exc:
@@ -205,9 +206,10 @@ def is_ecr_image_older_than_threshold(
 
 
 def evaluate_all_used_images(
-    ecr_client: boto3.client, image_uris: Set[str]
+    ecr_client: Boto3Client,
+    image_uris: Set[str],
 ) -> Tuple[str, str]:
-    """Evaluate all used ECR images and return compliance status + annotation."""
+    """Evaluate compliance of all used ECR images."""
     violations: List[str] = []
 
     for uri in image_uris:
@@ -228,11 +230,11 @@ def evaluate_all_used_images(
 
 
 # ────────────────────────────────────────────────
-# Submit Evaluation to AWS Config
+# Submit Evaluation
 # ────────────────────────────────────────────────
 
 def submit_config_evaluation(
-    config_client: boto3.client,
+    config_client: Boto3Client,
     resource_type: str,
     resource_id: str,
     compliance_type: str,
@@ -248,7 +250,7 @@ def submit_config_evaluation(
                     "ComplianceResourceType": resource_type,
                     "ComplianceResourceId": resource_id,
                     "ComplianceType": compliance_type,
-                    "Annotation": annotation[:400],  # Config has length limit
+                    "Annotation": annotation[:400],
                     "OrderingTimestamp": ordering_timestamp,
                 }
             ],
@@ -266,7 +268,10 @@ def submit_config_evaluation(
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """AWS Lambda entry point for Config custom rule."""
     env_info = get_lambda_env_info(context)
-    clients = initialize_clients(env_info["region"])
+    region = env_info["region"]
+    account_id = env_info["account_id"]
+
+    clients = initialize_clients(region)
 
     invoking_event = parse_invoking_event(event)
     resource = extract_evaluated_resource(invoking_event)
@@ -284,9 +289,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
         return {"statusCode": 200}
 
-    # Core logic
+    # Core logic - pass region & account_id explicitly
     used_ecr_images = fetch_currently_used_ecr_images(
-        clients["ecs"], resource["arn"] or resource["id"]
+        ecs_client=clients["ecs"],
+        service_arn_or_name=resource["arn"] or resource["id"],
+        region=region,
+        account_id=account_id,
     )
 
     compliance, annotation = evaluate_all_used_images(clients["ecr"], used_ecr_images)
