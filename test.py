@@ -1,11 +1,26 @@
+import json
+import boto3
+from datetime import datetime, timedelta
+
+
 def filter_events_by_access_key_id(access_key_id, days_ago=7):
     """
     根据 Access Key ID 调用 CloudTrail lookup_events() 并进行过滤。
+    
+    Args:
+        access_key_id: AWS Access Key ID
+        days_ago: 查询过去多少天的事件，默认为7天
+    
+    Returns:
+        filtered_events: 符合条件的事件列表
     """
     end_time = datetime.now()
     start_time = end_time - timedelta(days=days_ago)
 
     filtered_events = []
+    
+    # 初始化 CloudTrail client
+    client = boto3.client('cloudtrail')
     
     # 使用 Paginator 处理可能超出 MaxResults (默认50) 的大量结果
     paginator = client.get_paginator('lookup_events')
@@ -50,7 +65,10 @@ def filter_events_by_access_key_id(access_key_id, days_ago=7):
 # --- 示例调用 ---
 # 替换为你要查询的实际临时 Access Key ID
 TARGET_ACCESS_KEY_ID = 'ASIA...' 
-
+ 
 # 假设你知道目标临时 Access Key ID
 # events = filter_events_by_access_key_id(TARGET_ACCESS_KEY_ID, days_ago=3)
 # print(f"\n找到符合条件的事件总数: {len(events)}")
+ 
+ 
+ 
