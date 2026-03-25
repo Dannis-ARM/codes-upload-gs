@@ -1,61 +1,18 @@
 ```mermaid
-sequenceDiagram
-    participant A as 用户
-    participant B as 系统
-    participant C as 数据库
-    
-    A->>B: aaa
-    B->>C: 验证用户信息
-    C-->>B: 返回验证结果
-    C->>C: self
-    B-->>A: 登录成功/失败
-    系统-->>用户: 登录成功
+graph TD
+    A[父 Shell 进程] -->|1. 执行 exec 200>lock| B[父 Shell：FD 200 指向 lock 文件]
+    B --> C[父 Shell：持有独立锁]
+
+    A -->|2. 启动 | D[SubShell 子 Shell 进程<br/>⚠️ 独立进程！]
+    D -->|3. 执行 200>lock| E[SubShell：FD 200 指向 lock 文件<br/>⚠️ 和父 Shell 不是同一个！]
+    E --> F[SubShell：flock 200 加锁]
+    F --> G[执行任务...]
+    G -->|4. 括号结束| H[SubShell 进程退出]
+    H -->|5. 系统自动回收| I[关闭 SubShell 的 FD 200]
+    I -->|6. 锁自动释放| J[✅ 锁消失]
+
+    note1[重点：两个 200 数字一样<br/>但属于不同进程<br/>完全独立！]
+    B -.-> note1
+    E -.-> note1
+
 ```
-
-- [ ] test
-- [ ] test
-- [ ] test
-
-sdfasd
-
-| a    | b    | c     |       |
-|:-----|:-----|:------|:------|
-| asdf | 2    | 3     |       |
-|      | 3242 | 23423 | 23432 |
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant User as 用户 (User)
-    participant Host as MCP Client (如 Claude Desktop/IDE)
-    participant LLM as 语言模型 (LLM)
-    participant Server as MCP Server (如 Google Maps/GitHub/Local DB)
-    participant Resource as 外部资源/工具 (Tools/Resources)
-
-    User->>Host: 输入查询 (例如: "分析这个本地数据库的数据")
-    Host->>LLM: 发送 Prompt + 可用工具列表 (Tool Definitions)
-    
-    Note over LLM: LLM 判断需要调用特定工具
-    LLM-->>Host: 返回控制指令 (Call Tool: "query_db")
-    
-    rect rgb(12, 12, 120)
-        Note right of Host: MCP 标准协议交互开始
-        Host->>Server: 发送 JSON-RPC 请求 (tools/call)
-        Server->>Resource: 执行具体操作 (查询数据库/读取文件/API调用)
-        Resource-->>Server: 返回原始数据
-        Server-->>Host: 返回标准化结果 (Text/Image/Content)
-    end
-
-    Host->>LLM: 将工具返回的内容作为上下文发送
-    Note over LLM: 结合上下文生成最终回答
-    LLM-->>Host: 返回文本响应
-    Host->>User: 显示最终结果
-```
-
-asdf adasdf asds2asd
-as
-
-
-
-df dfasdf asds2 v d
-asdf dfasdf asds2

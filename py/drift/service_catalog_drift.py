@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Optional
 
 import boto3
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError
 
 # Configure logging
 logging.basicConfig(
