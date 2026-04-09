@@ -1,11 +1,11 @@
-// Lock expires after 1 hour (3600 seconds)
-boolean executed = ObsOnceTaskUtils.executeOnceWithExpire(
-        obsClient,
-        "my-bucket",
-        ".locks/process-s3-data",
+// 1 hour expiration
+boolean executed = S3OnceTaskUtils.executeOnce(
+        s3Client,
+        "your-bucket",
+        ".locks/your-task-id",
         3600,
         () -> {
-            // Your non-idempotent operation here
-            System.out.println("Task executed once");
+            // Your non-idempotent logic here
+            System.out.println("Task executed ONCE");
         }
 );
