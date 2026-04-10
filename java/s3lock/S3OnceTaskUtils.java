@@ -1,19 +1,15 @@
+import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import java.nio.charset.StandardCharsets;
 
 public class S3OnceTaskUtils {
 
     /**
-     * Execute a task exactly once in distributed environment.
-     * Safe from race conditions, supports auto-expiration, treats invalid content as expired.
-     *
-     * @param s3Client AWS Java SDK v2 S3 client
-     * @param bucket S3 bucket name
-     * @param lockKey lock key path
-     * @param lockTtlSeconds lock TTL
-     * @param task task to run once
-     * @return task result if executed, null if skipped
+     * Execute a task exactly once in a distributed environment.
+     * Race-condition safe, auto-expire, invalid content = expired.
      */
     public static <T> T executeOnce(
             S3Client s3Client,
@@ -23,8 +19,8 @@ public class S3OnceTaskUtils {
             java.util.concurrent.Callable<T> task
     ) {
         long now = System.currentTimeMillis() / 1000;
-        long newExpire = now + lockTtlSeconds;
-        byte[] newLockContent = String.valueOf(newExpire).getBytes(StandardCharsets.UTF_8);
+        long newExpireTime = now + lockTtlSeconds;
+        byte[] newLockBody = String.valueOf(newExpireTime).getBytes(StandardCharsets.UTF_8);
 
         // ==============================================
         // Step 1: Try to create lock atomically (if not exists)
@@ -36,7 +32,7 @@ public class S3OnceTaskUtils {
                     .ifNoneMatch("*")
                     .build();
 
-            s3Client.putObject(req, software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockContent));
+            s3Client.putObject(req, software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockBody));
             return callTask(task);
         } catch (S3Exception e) {
             if (e.statusCode() != 412) {
@@ -45,38 +41,40 @@ public class S3OnceTaskUtils {
         }
 
         // ==============================================
-        // Step 2: Lock exists – read and validate
+        // Step 2: Read existing lock & validate
         // ==============================================
         Long expireTs = null;
         String etag = null;
 
         try {
-            GetObjectResponse getResp = s3Client.getObject(
+            // Correct Java 2.x way to read bytes
+            byte[] bodyBytes = s3Client.getObject(
                     GetObjectRequest.builder().bucket(bucket).key(lockKey).build(),
-                    software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()
-            );
+                    ResponseTransformer.toBytes()
+            ).asByteArray();
 
-            etag = getResp.eTag();
-            byte[] body = getResp.contentAsByteArray();
+            etag = s3Client.headObject(
+                    software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                            .bucket(bucket).key(lockKey).build()
+            ).eTag();
 
             try {
-                String content = new String(body, StandardCharsets.UTF_8).trim();
+                String content = new String(bodyBytes, StandardCharsets.UTF_8).trim();
                 expireTs = Long.parseLong(content);
             } catch (Exception ignored) {
-                expireTs = 0L; // invalid body → treat as expired
+                expireTs = 0L; // invalid content → expired
             }
 
-            // Not expired → skip
             if (expireTs > now) {
                 return null;
             }
 
         } catch (Exception ignored) {
-            expireTs = 0L; // read failed → treat as expired
+            expireTs = 0L; // read failed → expired
         }
 
         // ==============================================
-        // Step 3: Atomic takeover (IfMatch = no race condition)
+        // Step 3: Atomic takeover with IfMatch (NO RACE)
         // ==============================================
         try {
             PutObjectRequest.Builder builder = PutObjectRequest.builder()
@@ -87,12 +85,12 @@ public class S3OnceTaskUtils {
                 builder.ifMatch(etag);
             }
 
-            s3Client.putObject(builder.build(), software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockContent));
+            s3Client.putObject(builder.build(), software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockBody));
             return callTask(task);
 
         } catch (S3Exception e) {
             if (e.statusCode() == 412 || e.statusCode() == 404) {
-                return null; // lost race
+                return null;
             }
             throw e;
         }
