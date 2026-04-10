@@ -1,57 +1,108 @@
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.time.Instant;
+import software.amazon.awssdk.services.s3.model.*;
+import java.nio.charset.StandardCharsets;
 
-/**
- * Utility to execute a task ONLY ONCE across multiple servers, using AWS S3 atomic lock.
- * Supports automatic lock expiration.
- */
-public final class S3OnceTaskUtils {
-
-    private static final InputStream EMPTY_CONTENT = new ByteArrayInputStream(new byte[0]);
+public class S3OnceTaskUtils {
 
     /**
-     * Execute a non-idempotent task exactly once in a distributed system.
-     * Uses S3 conditional create (if-none-match) + object expiration for auto-release.
+     * Execute a task exactly once in distributed environment.
+     * Safe from race conditions, supports auto-expiration, treats invalid content as expired.
      *
-     * @param s3Client AWS S3 client
+     * @param s3Client AWS Java SDK v2 S3 client
      * @param bucket S3 bucket name
-     * @param lockKey unique lock path (e.g. ".locks/task_process_data")
-     * @param expireSeconds lock will expire after this many seconds
+     * @param lockKey lock key path
+     * @param lockTtlSeconds lock TTL
      * @param task task to run once
-     * @return true if this node executed the task; false if skipped
+     * @return task result if executed, null if skipped
      */
-    public static boolean executeOnce(S3Client s3Client,
-                                      String bucket,
-                                      String lockKey,
-                                      long expireSeconds,
-                                      Runnable task) {
+    public static <T> T executeOnce(
+            S3Client s3Client,
+            String bucket,
+            String lockKey,
+            long lockTtlSeconds,
+            java.util.concurrent.Callable<T> task
+    ) {
+        long now = System.currentTimeMillis() / 1000;
+        long newExpire = now + lockTtlSeconds;
+        byte[] newLockContent = String.valueOf(newExpire).getBytes(StandardCharsets.UTF_8);
+
+        // ==============================================
+        // Step 1: Try to create lock atomically (if not exists)
+        // ==============================================
         try {
-            // Build request: atomically create lock ONLY IF IT DOES NOT EXIST
-            PutObjectRequest request = PutObjectRequest.builder()
+            PutObjectRequest req = PutObjectRequest.builder()
                     .bucket(bucket)
                     .key(lockKey)
-                    .ifNoneMatch("*")  // Core atomic lock: create only if not exists
-                    .expires(Instant.now().plusSeconds(expireSeconds))  // Auto expire lock
+                    .ifNoneMatch("*")
                     .build();
 
-            // Atomic upload: only one server succeeds
-            s3Client.putObject(request, EMPTY_CONTENT);
+            s3Client.putObject(req, software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockContent));
+            return callTask(task);
+        } catch (S3Exception e) {
+            if (e.statusCode() != 412) {
+                throw e;
+            }
+        }
 
-            // Run the non-idempotent task
-            task.run();
-            return true;
+        // ==============================================
+        // Step 2: Lock exists – read and validate
+        // ==============================================
+        Long expireTs = null;
+        String etag = null;
+
+        try {
+            GetObjectResponse getResp = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(lockKey).build(),
+                    software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()
+            );
+
+            etag = getResp.eTag();
+            byte[] body = getResp.contentAsByteArray();
+
+            try {
+                String content = new String(body, StandardCharsets.UTF_8).trim();
+                expireTs = Long.parseLong(content);
+            } catch (Exception ignored) {
+                expireTs = 0L; // invalid body → treat as expired
+            }
+
+            // Not expired → skip
+            if (expireTs > now) {
+                return null;
+            }
+
+        } catch (Exception ignored) {
+            expireTs = 0L; // read failed → treat as expired
+        }
+
+        // ==============================================
+        // Step 3: Atomic takeover (IfMatch = no race condition)
+        // ==============================================
+        try {
+            PutObjectRequest.Builder builder = PutObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(lockKey);
+
+            if (etag != null) {
+                builder.ifMatch(etag);
+            }
+
+            s3Client.putObject(builder.build(), software.amazon.awssdk.core.sync.RequestBody.fromBytes(newLockContent));
+            return callTask(task);
 
         } catch (S3Exception e) {
-            // 412 Precondition Failed = lock already exists
-            if (e.statusCode() == 412) {
-                return false;
+            if (e.statusCode() == 412 || e.statusCode() == 404) {
+                return null; // lost race
             }
-            // Throw other errors (network, permission, etc.)
-            throw new RuntimeException("Failed to acquire S3 lock", e);
+            throw e;
+        }
+    }
+
+    private static <T> T callTask(java.util.concurrent.Callable<T> task) {
+        try {
+            return task.call();
+        } catch (Exception e) {
+            throw new RuntimeException("Task execution failed", e);
         }
     }
 }
