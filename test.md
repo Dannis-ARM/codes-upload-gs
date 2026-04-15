@@ -1,18 +1,36 @@
 ```mermaid
-graph TD
-    A[父 Shell 进程] -->|1. 执行 exec 200>lock| B[父 Shell：FD 200 指向 lock 文件]
-    B --> C[父 Shell：持有独立锁]
+%%{init: {
+  "theme": "dark",
+  "themeVariables": {
+    "primaryColor": "#1e3a8a",
+    "primaryTextColor": "#ffffff",
+    "primaryBorderColor": "#60a5fa",
+    "lineColor": "#93c5fd",
+    "textColor": "#f1f5f9",
+    "fontSize": "15px",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    "background": "#0f172a",
+    "nodeBorder": "#60a5fa",
+    "clusterBkg": "#1e293b",
+    "clusterBorder": "#3b82f6",
+    "mainBkg": "#1e3a8a",
+    "nodeTextColor": "#ffffff"
+  }
+}}%%
 
-    A -->|2. 启动 | D[SubShell 子 Shell 进程<br/>⚠️ 独立进程！]
-    D -->|3. 执行 200>lock| E[SubShell：FD 200 指向 lock 文件<br/>⚠️ 和父 Shell 不是同一个！]
-    E --> F[SubShell：flock 200 加锁]
-    F --> G[执行任务...]
-    G -->|4. 括号结束| H[SubShell 进程退出]
-    H -->|5. 系统自动回收| I[关闭 SubShell 的 FD 200]
-    I -->|6. 锁自动释放| J[✅ 锁消失]
+flowchart TD
+    %% 强制覆盖节点样式（关键修复）
+    classDef startNode fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef processNode fill:#1e40af,stroke:#60a5fa,stroke-width:1px,color:#e0e7ff;
+    classDef decisionNode fill:#3b82f6,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef actionNode fill:#1e3a8a,stroke:#60a5fa,stroke-width:1px,color:#ffffff;
+    classDef finalNode fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
 
-    note1[重点：两个 200 数字一样<br/>但属于不同进程<br/>完全独立！]
-    B -.-> note1
-    E -.-> note1
-
+    A[Start]:::startNode --> B[Process Step 1]:::processNode
+    B --> C{Decision?}:::decisionNode
+    C -->|Yes| D[Action A]:::actionNode
+    C -->|No| E[Action B]:::actionNode
+    D --> F[Final Step]:::finalNode
+    E --> F
+    F --> G[End]:::startNode
 ```
