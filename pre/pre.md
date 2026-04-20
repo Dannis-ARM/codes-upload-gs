@@ -37,9 +37,44 @@ The S3 Bucket hosts this list. Whenever a client connects, it checks this bucket
 
 ---
 
-### **💡 演讲要点回顾 (Skill Checklist):**
-* **对比感**：Vault (Software) vs. PCA (Hardware)；Hours vs. Seconds.
-* **形象化**：Master Seal (总公章), Blacklist (黑名单), Automated Eyes (眼睛).
-* **专业度**：11 Nines (11个9), Self-destruct (自毁), FIPS Level 3.
+---
 
-这一套稿子下去，不仅能把 PCA 讲明白，还能顺带把 S3 和安全硬件的价值也“卖”出去。祝你演讲成功！
+# **Page 6: The Strategy - Why Service Catalog?**
+
+### **Module 1: The Tooling Gap (面对工具链断层的务实选择)**
+"We all love **Terraform** for its flexibility. However, in our specific environment here in China, we face a 'Governance Gap.' We don't have the full suite of automated **Guardrails**—the security policies that scan and block non-compliant IaC code in real-time. 
+
+Without those Guardrails, using raw Terraform is like driving a fast car without brakes. We didn't want to risk our PKI security just to stick with a specific CLI tool. We needed a solution that was **'Secure by Default.'**"
+
+---
+
+### **Module 2: CloudFormation as the "Immutable Template" (通俗解释 CfN)**
+"This is why we chose **Service Catalog**, powered by **CloudFormation**. 
+
+For those who haven't used it, think of CloudFormation as AWS's native **'State Definition'**—it's another way to do IaC. But the magic happens when we wrap it in Service Catalog. 
+
+Instead of giving you raw code to execute, we give you a **'Pre-approved Product.'** We’ve already 'baked' all the security configurations—like HSM encryption and CRL logging—directly into the template. In the IaC world, we’ve moved from **'Writing Code'** to **'Consuming a Validated Service.'** The CloudFormation template acts as an immutable mold; it’s physically impossible to deploy a configuration that doesn't meet our security standard."
+
+---
+
+### **Module 3: Shift-Left Governance (治理前置)**
+"The real benefit here is **Zero-Trust Deployment**. 
+
+By using Service Catalog, we achieve **'Least Privilege'** at scale. Developers don't need IAM permissions to create sensitive resources like Private CAs. They only need permission to 'order' the product from the Catalog. 
+
+We’ve successfully **'Shifted Left'** our security. We aren't auditing your infrastructure *after* it’s created; we are ensuring that only **authorized, hardened architectures** can be launched in the first place. It’s a transition from 'Enforcement' to 'Enablement'."
+
+---
+
+### **💡 针对 IaC 观众的 Key Takeaways:**
+
+* **Tooling Gap**: 坦诚是因为 China Region 缺少特定的 Guardrail 自动化工具，这显得你非常懂本地架构落地（Pragmatic）。
+* **Immutable Mold**: 把 CloudFormation 比作“不可变模具”，强调它在 Service Catalog 包装下的**强制合规性**。
+* **Encapsulation (封装)**: 强调开发者是从“写代码”变成“调服务”，降低了心智负担。
+
+---
+
+### **Dev 的临场建议 (The "Pro" Tone):**
+如果有人问：“既然都用 CloudFormation 了，为什么不直接给他们 Template 文件？”
+你可以这样回答：
+> "Because a Template is just a file—it can be modified. **Service Catalog is a Gateway.** It ensures that the version you deploy is the version we audited. It provides the **Governance Layer** that raw IaC files simply cannot."
