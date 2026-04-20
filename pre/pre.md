@@ -60,7 +60,7 @@ Instead of giving you raw code to execute, we give you a **'Pre-approved Product
 ### **Module 3: Shift-Left Governance (治理前置)**
 "The real benefit here is **Zero-Trust Deployment**. 
 
-By using Service Catalog, we achieve **'Least Privilege'** at scale. Developers don't need IAM permissions to create sensitive resources like Private CAs. They only need permission to 'order' the product from the Catalog. 
+By using Service Catalog, we achieve **'Least Privilege'** at scale. Developers don't need IAM permissions to create sensitive resources like Private CAs. They only need permission to 'order' the product from the Shopping list. 
 
 We’ve successfully **'Shifted Left'** our security. We aren't auditing your infrastructure *after* it’s created; we are ensuring that only **authorized, hardened architectures** can be launched in the first place. It’s a transition from 'Enforcement' to 'Enablement'."
 
@@ -78,3 +78,24 @@ We’ve successfully **'Shifted Left'** our security. We aren't auditing your in
 如果有人问：“既然都用 CloudFormation 了，为什么不直接给他们 Template 文件？”
 你可以这样回答：
 > "Because a Template is just a file—it can be modified. **Service Catalog is a Gateway.** It ensures that the version you deploy is the version we audited. It provides the **Governance Layer** that raw IaC files simply cannot."
+
+
+---
+
+### **Module 7: Empowering the PKI Team (身份集成与运维赋能)**
+
+"Lastly, let’s talk about how we empower our **PKI Team** to manage this infrastructure efficiently. We don't want them managing a separate set of credentials. Instead, we’ve integrated AWS PCA with our **Custom Identity Provider**—our internal **Corporate Identity System**.
+
+What this means is that the PKI Team can log in using their **standard corporate accounts**. But more importantly, it allows us to implement **Granular Access Control**. We can define exactly who is allowed to 'issue' a certificate and who is only allowed to 'audit' the logs, all based on their existing corporate roles.
+
+By integrating with our internal management systems, we’ve transformed PKI from a standalone technical silo into a **seamlessly governed service**. It provides the PKI Team with a centralized, secure dashboard where authentication and authorization are handled automatically, ensuring that only the right people have the 'keys to the kingdom' at all times."
+
+---
+
+### **PPT 页面建议：**
+* **标题**：Seamless Integration & Governance (无缝集成与治理)
+* **左侧图示**：Corporate ID $\rightarrow$ SSO $\rightarrow$ AWS PCA.
+* **右侧关键词**：
+    * **Single Sign-On (SSO)**: One identity for all tasks.
+    * **Role-Based Access Control (RBAC)**: Precise permissions.
+    * **Automated Governance**: Integrated with internal audit workflows.
