@@ -7,16 +7,14 @@
 # **Page 5: The Architecture & Benefits of AWS Private CA**
 
 ### **Module 1: What is AWS PCA? (核心定义)**
-"AWS Private CA is our cloud-based **'Authentication Center.'** Its job is to issue **'Digital IDs'**—the certificates—to our microservices to ensure secure TLS communication. 
+"AWS Private CA is our cloud-native **'Authentication Center.'** Its job is to issue **'Digital IDs'**—the certificates—to our all services within firm to ensure secure TLS communication. 
 
-But the real value isn't just issuing IDs; it’s about **where the private keys live.** Unlike traditional scripts, it provides a managed, hardware-secured environment for our entire trust chain."
+But the real value isn't just issuing IDs; it’s about **benefits** we brought natively from Cloud.
 
 ---
 
 ### **Module 2: Hardware-Level Protection (物理级安全)**
-"Now, let’s talk about **Key Storage**. Some of you might say: *'We already use HashiCorp Vault on-prem, so it's not just a file on a server.'* That’s true—Vault is powerful. However, Vault is primarily **software-based**, meaning keys move through system memory during operations. 
-
-**AWS PCA takes this a step further.** It forces all master keys into an **HSM (Hardware Security Module)**—a **'Physical Vault.'** These keys are 'burned' into the chip and **never** leave that hardware boundary. In fact, if anyone tries to physically break into the chip, the keys instantly **self-destruct**. We are moving from 'logically secure' to **'physically impossible to steal.'**"
+"Now, let’s talk about **Root Key Storage**. In PKI, the Root Key is the source of all trust, so where do we anchor it? **AWS PCA takes this a step further natively.** It forces all master keys into an **HSM**—a **'Physical Vault.'** These keys are 'burned' into the chip and **never** leave that hardware boundary. This means at the API layer, the private key is simply inaccessible. Even if someone physically breaches the data center, steals the chip, and attempts to extract the data, the HSM will detect the intrusion and **self-destruct** the keys. While a solution like **Vault** can also be backed by an HSM, PCA provides this level of hardware security out-of-the-box, moving us from 'logically secure' to **'physically impossible to steal.'**"
 
 ---
 
