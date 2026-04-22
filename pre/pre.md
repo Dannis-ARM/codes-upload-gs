@@ -27,13 +27,15 @@ With Service Catalog, we achieve **'Least Privilege'** at scale. Developers don'
 
 ## **Part 7: Global Collaboration & Access Control**
 
-"Lastly, let’s talk about how we empower our **PKI Team**. We’ve integrated AWS PCA with our **Corporate Identity System**, meaning the team logs in using their **standard corporate accounts**. This allows for **Granular Access Control**: we define exactly who can provision infrastructure versus who is strictly limited to auditing logs.
+"Lastly, let’s talk about how we empower our **PKI Team and cloud users**. We’ve integrated AWS PCA with our **Corporate Identity System**, which acts as the vital middleware between our on-premise environment and the cloud. 
 
-To make this work globally while staying compliant, we’ve designed two workflows:
+This integration allows both **human and system accounts** to log in using our standard corporate credentials. By requesting access through the firm's existing permission workflow, we ensure that power is granted only under specific conditions. This allows for **Granular Access Control**: we can define exactly who is authorized to provision infrastructure, who can manage certificates, and who is restricted to a 'read-only' audit role. 
 
-* **For our Onshore Team:** They use our local **GitLab CI/CD pipelines** to obtain temporary credentials via China indentity providers and deploy resources directly.
-* **For our Offshore Experts:** We want to leverage global expertise without 'reinventing the wheel.' Due to local regulatory requirements, overseas access requires additional domestic approval. We partnered with the Windows Team to utilize **Lock-down Desktops**. This provides a secure, isolated environment where offshore colleagues—once their lease is approved—can use the same China GitLab pipelines to manage deployments.
+To make this work globally while staying compliant, we’ve designed two distinct workflows:
 
-By integrating with our internal identity providers, we’ve created a centralized, secure environment. Authentication and authorization are handled automatically, ensuring that only the right people have the **'keys to the kingdom'** at all times."
+* **For our Onshore Team:** The process is seamless. They use our local **GitLab CI/CD pipelines** to obtain temporary credentials and deploy infrastructure resources directly through automated workflows.
+* **For our Offshore Experts:** We want to leverage our global expertise without 'reinventing the wheel.' However, due to regulatory requirements, overseas access requires additional domestic approval. We partnered with the Windows Team to utilize **Lock-down Desktops**. This provides a secure, isolated environment where offshore colleagues—once their lease is approved—can use the same GitLab pipelines as the onshore team to manage deployments.
+
+By integrating with our internal management systems, we’ve created a centralized, secure environment. Authentication and authorization are handled automatically, ensuring that only the right people have the **'keys to the kingdom'** at all times."
 
 
