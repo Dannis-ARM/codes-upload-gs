@@ -23,25 +23,32 @@ To maintain total visibility, **we used CloudWatch as our 'eyes,'** CloudWatch w
 
 "Let's go deeper into *how* we handle IaC deployment. You might think: we have GSCloud on-prem, and we have SkyFoundry and FastTrack on Cloud, so why do we need to talk about IaC governance?
 
-The reality is that we have a **'Governance Gap'** in the China environment. Years ago, when Sky China was first formed, we didn't have a mature SDLC or established guardrails; we had to start things from scratch.
+The reality is that we have chanlenegs on **'Governance Gap'** in the China environment. Years ago, when Sky China was first formed, we didn't have the Gitlab, SDLC or established guardrails; we had to start things from scratch.
 
-While we all value **Terraform** for its flexibility, the China region lacked **'Guardrails'**—the safety nets that scan and block risky code before it runs. Without those brakes, using raw IaC is a massive risk for our PKI. You might mistakenly create a PCA that allows unauthorized domains, or create an S3 bucket policy that allows anyone to update the blacklist. We needed a solution that was **'Secure by Default.'**
+While we all value **Terraform** for its flexibility, the China lacked **'Guardrails'**—the safty controls that scan and block risky terraform code before it runs. Without those brakes, using raw TF code is a massive risk for our PKI. You might mistakenly create a PCA that allows unauthorized domains, or create an S3 bucket policy that allows anyone to update the CRL blacklist. We need a solution that both flexible and safe to use.
 
-This is why we chose **AWS Service Catalog**, powered by **CloudFormation**. Think of CloudFormation as a **'Blueprint'** that provisions a fully compliant Private CA and S3 buckets restricted to internal access only. By wrapping with Service Catalog, every security requirement—like KMS encryption and strict Bucket Policies—is already 'baked' into the template. Users no longer need to worry if their writting policy is safe enough, because our Tech Risk friends have already carefully reviewed the templates. Users simply choose the product from the catalog into 'shopping cart' and checkout. 
+This is when **AWS Service Catalog** comes to help, 
+Service Catalog acts as our governance layer, helping us follow **'Least Privilege'** principles and making it impossible to deploy anything that doesn't meet risk requirements.
 
-Service Catalog acts as our governance layer, helping us follow **'Least Privilege'** principles and making it impossible to deploy anything that doesn't meet risk requirements. The IAM team doesn't need high-level permissions to create Private CAs directly; instead, they 'order' the PCA from Sky provided products. This ensures that only **hardened secure resources** can be launched in the first place."
+"It’s powered by **CloudFormation**. In case you’ve never heard of it, think of CloudFormation as a **'Blueprint'**—defined using either JSON or YAML—that can provisions any cloud ressouces.
+
+"By wrapping these blueprints within **Service Catalog**, every security requirement—such as KMS encryption and strict S3 Bucket Policies—is already **'baked'** into the template. This allows us to provision fully compliant Private CAs and S3 buckets that are restricted to internal access by default. 
+
+Users no longer need to worry about whether their policy 'writing' is secure enough, because our **Tech Risk** friends carefully helped reviewed and approved the underlying templates. For the end user, the process is seamless: they simply select the pre-approved product from the catalog, add it to their **'shopping cart,'** and check out to deploy."
+
+The IAM team doesn't need high-level permissions to create Private CAs directly; instead, they 'order' the PCA from Sky provided products. This ensures that only **hardened secure resources** can be launched in the first place."
 
 ---
 
 ## **Part 7: Global Collaboration & Access Control**
 
-"Lastly, let’s talk about how we empower our **PKI Team** in their daily maintenance. With help from our offshore peers, we localized **\<XXX\>**, which acts as the broker to map on-premise identity to the cloud roles.
+"Lastly, let’s talk about how we empower our **PKI Team** in their deployment and maintenance. With help from our offshore peers, we localized **\<XXX\>**, which acts as the broker to map on-premise identities to cloud roles. In this way, you are granted specific cloud permissions, such as creating audit reports or issuing certificates.
 
 **\<XXX\>** allows both **human and system accounts** to log in. In collaboration with IAM, we leverage **\<BBB\>** and **\<CCC\>** to achieve **Granular Access Control**. We can define exactly who is authorized to provision infrastructure, who can manage certificates, and who is restricted to a 'read-only' audit role.
 
 As seen in the graph on the right, we’ve designed two distinct workflows for our onshore team and offshore peers:
 
-* **For our Onshore Team:** The process is straightforward. They use **CI/CD pipelines** to push deployment scripts. Using the system account, they obtain temporary credentials from **\<XXX\>** to deploy resources.
+* **For our Onshore Team:** The process is straightforward. Onshore users use **CI/CD pipelines** to push deployment scripts. Using the system account, they obtain temporary credentials from **\<XXX\>** to deploy resources.
 * **For our Offshore Experts:** We have an additional layer required by China's regulatory framework—overseas access requires domestic approval. We partnered with the Windows Team to utilize **Lockdown Desktops**. This provides a secure, isolated environment where offshore colleagues log in, fetch a lease, and then launch the same CI/CD pipelines to manage deployments.
 
-By integrating with our internal management systems, we’ve created a centralized, secure environment. Authentication and authorization are handled automatically, ensuring that only the right people have the **'keys to the kingdom'** at all times."
+By localizing **\<XXX\>** and integrating it with China IAM systems, we ensure that access is strictly controlled, meeting local regulatory requirements while remaining aligned with our global design."
