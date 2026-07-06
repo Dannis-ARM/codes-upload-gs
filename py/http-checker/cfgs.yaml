@@ -1,0 +1,5 @@
+apis:
+  - before: https://<before1>/v1/api1
+    after: https://<after1>/v1/api1
+  - before: https://<before2>/v1/api1
+    after: https://<after2>/v1/api1

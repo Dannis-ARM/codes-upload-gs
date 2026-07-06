@@ -1,0 +1,115 @@
+"""HTTP client for fetching API responses."""
+
+import time
+from typing import Any, Dict, Optional, Tuple
+from dataclasses import dataclass
+
+import httpx
+
+from .config import ApiCase, GlobalConfig
+
+
+@dataclass
+class Response:
+    """HTTP response container."""
+    url: str
+    status_code: int
+    headers: Dict[str, str]
+    body: Any  # Parsed JSON or text
+    raw_body: str
+    elapsed_seconds: float
+
+
+def _merge_headers(global_headers: Dict[str, str], api_headers: Dict[str, str]) -> Dict[str, str]:
+    """Merge global and API-specific headers."""
+    merged = global_headers.copy()
+    merged.update(api_headers)
+    return merged
+
+
+def _parse_response_body(response: httpx.Response) -> Tuple[Any, str]:
+    """Parse response body as JSON if possible, otherwise return text."""
+    raw_body = response.text
+    try:
+        if raw_body.strip():
+            return response.json(), raw_body
+        return None, raw_body
+    except Exception:
+        return raw_body, raw_body
+
+
+def _fetch_with_retry(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    headers: Dict[str, str],
+    params: Dict[str, Any],
+    body: Optional[Dict[str, Any]],
+    retries: int,
+) -> Response:
+    """Fetch with retry logic."""
+    last_exception: Optional[Exception] = None
+
+    for attempt in range(retries + 1):
+        try:
+            start_time = time.time()
+
+            kwargs: Dict[str, Any] = {
+                "headers": headers,
+                "params": params,
+            }
+            if body is not None:
+                kwargs["json"] = body
+
+            response = client.request(method, url, **kwargs)
+
+            elapsed = time.time() - start_time
+            parsed_body, raw_body = _parse_response_body(response)
+
+            return Response(
+                url=str(response.url),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=parsed_body,
+                raw_body=raw_body,
+                elapsed_seconds=elapsed,
+            )
+        except Exception as e:
+            last_exception = e
+            if attempt < retries:
+                time.sleep(1 * (attempt + 1))  # Exponential backoff
+
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("Failed to fetch response")
+
+
+def fetch_response(
+    api_case: ApiCase,
+    target: str,
+    global_config: GlobalConfig,
+) -> Response:
+    """
+    Fetch response from either 'before' or 'after' endpoint.
+
+    Args:
+        api_case: The API test case.
+        target: Either 'before' or 'after'.
+        global_config: Global configuration.
+
+    Returns:
+        Response object.
+    """
+    url = api_case.before if target == "before" else api_case.after
+    headers = _merge_headers(global_config.common_headers, api_case.headers)
+
+    with httpx.Client(timeout=global_config.timeout, follow_redirects=True) as client:
+        return _fetch_with_retry(
+            client=client,
+            method=api_case.method,
+            url=url,
+            headers=headers,
+            params=api_case.params,
+            body=api_case.body,
+            retries=global_config.retries,
+        )

@@ -1,0 +1,48 @@
+# Migration API Checker Configuration
+# 数据库迁移 API 一致性检查配置
+
+global:
+  common_headers:
+    User-Agent: "Migration-Checker/1.0"
+    Accept: "application/json"
+  timeout: 30
+  retries: 0  # 重试次数，默认 0（不重试）
+
+apis:
+  - name: "获取用户列表"
+    method: "GET"
+    before: "https://old-api.example.com/v1/users"
+    after: "https://new-api.example.com/v1/users"
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    params:
+      page: 1
+      size: 20
+    ignore_fields:
+      - "timestamp"
+      - "requestId"
+      - "data[*].updatedAt"
+
+  - name: "创建用户"
+    method: "POST"
+    before: "https://old-api.example.com/v1/users"
+    after: "https://new-api.example.com/v1/users"
+    headers:
+      Content-Type: "application/json"
+      Authorization: "Bearer ${API_TOKEN}"
+    body:
+      name: "Test User"
+      email: "test@example.com"
+    ignore_fields:
+      - "id"
+      - "createdAt"
+      - "updatedAt"
+
+  - name: "获取订单详情"
+    method: "GET"
+    before: "https://old-api.example.com/v1/orders/123"
+    after: "https://new-api.example.com/v1/orders/123"
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    ignore_fields:
+      - "processedAt"
