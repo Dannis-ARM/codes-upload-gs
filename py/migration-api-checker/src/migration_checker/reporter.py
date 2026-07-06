@@ -9,6 +9,7 @@ from dataclasses import dataclass, asdict
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.text import Text
 
 from .client import Response
 from .comparator import ComparisonResult
@@ -87,11 +88,28 @@ class Reporter:
         if failed:
             self.console.print("\n[red]Failed Tests:[/red]")
             for r in failed:
-                self.console.print(f"  - [bold]{r.name}[/bold]")
+                self.console.print(f"\n  [bold]{r.name}[/bold]")
                 if r.error:
-                    self.console.print(f"    Error: {r.error}")
+                    self.console.print(f"    [red]Error:[/red] {r.error}")
                 if r.diff:
-                    self.console.print(Panel(r.diff, title="Diff", expand=False))
+                    # Parse diff lines and render with colors
+                    diff_lines = r.diff.splitlines()
+                    if diff_lines:
+                        formatted_diff = Text()
+                        for line in diff_lines:
+                            if line.startswith('---'):
+                                formatted_diff.append(line + "\n", style="blue")
+                            elif line.startswith('+++'):
+                                formatted_diff.append(line + "\n", style="blue")
+                            elif line.startswith('-'):
+                                formatted_diff.append(line + "\n", style="red")
+                            elif line.startswith('+'):
+                                formatted_diff.append(line + "\n", style="green")
+                            elif line.startswith('@'):
+                                formatted_diff.append(line + "\n", style="cyan")
+                            else:
+                                formatted_diff.append(line + "\n", style="white")
+                        self.console.print(Panel(formatted_diff, title="Response Diff", border_style="yellow"))
 
     def save_report(self) -> str:
         """Save full report to file and return the path."""

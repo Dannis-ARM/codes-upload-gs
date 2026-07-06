@@ -9,7 +9,7 @@ global:
   retries: 0
 
 apis:
-  - name: "获取用户列表 (GET)"
+  - name: "✅ 获取用户列表 (相同)"
     method: "GET"
     before: "http://localhost:8000/v1/users"
     after: "http://localhost:8001/v1/users"
@@ -17,7 +17,7 @@ apis:
       - "timestamp"
       - "data[*].updatedAt"
 
-  - name: "创建用户 (POST)"
+  - name: "✅ 创建用户 (相同)"
     method: "POST"
     before: "http://localhost:8000/v1/users"
     after: "http://localhost:8001/v1/users"
@@ -31,9 +31,19 @@ apis:
       - "createdAt"
       - "updatedAt"
 
-  - name: "获取订单详情 (GET)"
+  - name: "✅ 获取订单详情 (相同)"
     method: "GET"
     before: "http://localhost:8000/v1/orders/123"
     after: "http://localhost:8001/v1/orders/123"
     ignore_fields:
       - "processedAt"
+
+  - name: "❌ 获取产品列表 (不同: count -> total)"
+    method: "GET"
+    before: "http://localhost:8000/v1/products"
+    after: "http://localhost:8001/v1/products"
+
+  - name: "❌ 获取状态 (不同: code 值)"
+    method: "GET"
+    before: "http://localhost:8000/v1/status"
+    after: "http://localhost:8001/v1/status"

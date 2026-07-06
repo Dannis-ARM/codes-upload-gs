@@ -10,6 +10,7 @@
 - 支持环境变量替换
 - 彩色终端输出和详细日志报告
 - 可选重试机制
+- 支持多线程并行测试 (`pytest-xdist`)
 
 ## Quick Start
 
@@ -52,6 +53,16 @@ Or with custom config file:
 
 ```bash
 uv run pytest tests/test_migration.py -v --config=my_config.yaml
+```
+
+Run with multi-threading (faster):
+
+```bash
+# Auto-detect CPU cores
+uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml -n auto
+
+# Or specify number of workers
+uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml -n 4
 ```
 
 ## Configuration
