@@ -7,17 +7,10 @@ from dataclasses import asdict
 
 import pytest
 
-# Import add_worker_result from conftest
-sys.path.insert(0, str(Path(__file__).parent))
-try:
-    from conftest import add_worker_result
-except ImportError:
-    add_worker_result = None
-
 from migration_checker.config import load_config, Config
 from migration_checker.client import fetch_response
 from migration_checker.comparator import compare_responses
-from migration_checker.reporter import get_reporter
+from migration_checker.reporter import get_reporter, TestResult
 
 
 @pytest.fixture(scope="session")
@@ -68,6 +61,7 @@ def test_api_consistency(api_case, config, reporter):
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     before_resp = None
     after_resp = None
+    error_msg = ""
 
     try:
         # Fetch before response
@@ -83,23 +77,23 @@ def test_api_consistency(api_case, config, reporter):
             api_case.ignore_fields,
         )
 
-        # Create result dict
-        result_dict = {
-            "name": api_case.name,
-            "success": comparison.match,
-            "before_url": before_resp.url,
-            "after_url": after_resp.url,
-            "before_status": before_resp.status_code,
-            "after_status": after_resp.status_code,
-            "before_elapsed": before_resp.elapsed_seconds,
-            "after_elapsed": after_resp.elapsed_seconds,
-            "diff": comparison.diff if not comparison.match else "",
-            "error": "",
-        }
+        # Create test result object
+        result = TestResult(
+            name=api_case.name,
+            success=comparison.match,
+            before_url=before_resp.url,
+            after_url=after_resp.url,
+            before_status=before_resp.status_code,
+            after_status=after_resp.status_code,
+            before_elapsed=before_resp.elapsed_seconds,
+            after_elapsed=after_resp.elapsed_seconds,
+            diff=comparison.diff if not comparison.match else "",
+            error="",
+        )
 
-        # Record result - use worker method if in xdist, else reporter
-        if worker_id and worker_id != "master" and add_worker_result:
-            add_worker_result(result_dict)
+        # Record - worker mode saves single file, normal mode accumulates
+        if worker_id and worker_id != "master":
+            reporter.save_worker_result(worker_id, result)
         else:
             reporter.record_test(
                 name=api_case.name,
@@ -112,10 +106,14 @@ def test_api_consistency(api_case, config, reporter):
         assert comparison.match, f"Response mismatch:\n{comparison.diff}"
 
     except Exception as e:
+        # Skip AssertionError - we already recorded that in try block
+        if isinstance(e, AssertionError):
+            raise
+
         error_msg = str(e)
-        # Only record if not already recorded (i.e. error before comparison)
+
+        # Create dummy responses if needed
         if before_resp is None or after_resp is None:
-            # Create dummy responses for error reporting
             from migration_checker.client import Response as ClientResponse
             dummy = ClientResponse(
                 url=api_case.before,
@@ -128,30 +126,31 @@ def test_api_consistency(api_case, config, reporter):
             before_resp = before_resp or dummy
             after_resp = after_resp or dummy
 
-            from migration_checker.comparator import ComparisonResult
+        from migration_checker.comparator import ComparisonResult
 
-            result_dict = {
-                "name": api_case.name,
-                "success": False,
-                "before_url": before_resp.url,
-                "after_url": after_resp.url,
-                "before_status": before_resp.status_code,
-                "after_status": after_resp.status_code,
-                "before_elapsed": before_resp.elapsed_seconds,
-                "after_elapsed": after_resp.elapsed_seconds,
-                "diff": "",
-                "error": error_msg,
-            }
+        result = TestResult(
+            name=api_case.name,
+            success=False,
+            before_url=before_resp.url,
+            after_url=after_resp.url,
+            before_status=before_resp.status_code,
+            after_status=after_resp.status_code,
+            before_elapsed=before_resp.elapsed_seconds,
+            after_elapsed=after_resp.elapsed_seconds,
+            diff="",
+            error=error_msg,
+        )
 
-            if worker_id and worker_id != "master" and add_worker_result:
-                add_worker_result(result_dict)
-            else:
-                reporter.record_test(
-                    name=api_case.name,
-                    before_resp=before_resp,
-                    after_resp=after_resp,
-                    comparison=ComparisonResult(match=False, diff="", details={}),
-                    error=error_msg,
-                )
+        # Record error
+        if worker_id and worker_id != "master":
+            reporter.save_worker_result(worker_id, result)
+        else:
+            reporter.record_test(
+                name=api_case.name,
+                before_resp=before_resp,
+                after_resp=after_resp,
+                comparison=ComparisonResult(match=False, diff="", details={}),
+                error=error_msg,
+            )
 
         pytest.fail(f"Test failed with error: {error_msg}")

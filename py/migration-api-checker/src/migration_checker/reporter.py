@@ -3,6 +3,7 @@
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
@@ -145,6 +146,66 @@ class Reporter:
                 f.write("\n")
 
         return json_path
+
+    def save_worker_result(self, worker_id: str, result: TestResult) -> str:
+        """Save a single test result from a worker to its own file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"worker_{worker_id}_{timestamp}.json"
+        filepath = os.path.join(self.log_dir, filename)
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump([asdict(result)], f, indent=2, ensure_ascii=False)
+
+        return filepath
+
+    @staticmethod
+    def load_and_merge(log_dir: str = "logs") -> str:
+        """Load all worker result files and merge into one report."""
+        logs_path = Path(log_dir)
+        if not logs_path.exists():
+            return ""
+
+        all_results: List[Dict] = []
+        worker_files = list(logs_path.glob("worker_*.json"))
+
+        for worker_file in worker_files:
+            try:
+                with open(worker_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    all_results.extend(data)
+            except Exception:
+                continue
+
+        if not all_results:
+            return ""
+
+        # Create merged report
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        success_count = sum(1 for r in all_results if r["success"])
+
+        report = {
+            "start_time": datetime.now().isoformat(),
+            "end_time": datetime.now().isoformat(),
+            "results": all_results,
+            "summary": {
+                "total": len(all_results),
+                "passed": success_count,
+                "failed": len(all_results) - success_count,
+            }
+        }
+
+        report_file = logs_path / f"report_{timestamp}_merged.json"
+        with open(report_file, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+
+        # Clean up worker files
+        for worker_file in worker_files:
+            try:
+                worker_file.unlink()
+            except Exception:
+                pass
+
+        return str(report_file)
 
 
 # Global reporter instance
