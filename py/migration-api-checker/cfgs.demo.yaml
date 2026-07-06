@@ -1,0 +1,39 @@
+# Demo Configuration - Use with demo_server.py
+# 演示配置 - 配合 demo_server.py 使用
+
+global:
+  common_headers:
+    User-Agent: "Migration-Checker/1.0"
+    Accept: "application/json"
+  timeout: 10
+  retries: 0
+
+apis:
+  - name: "获取用户列表 (GET)"
+    method: "GET"
+    before: "http://localhost:8000/v1/users"
+    after: "http://localhost:8001/v1/users"
+    ignore_fields:
+      - "timestamp"
+      - "data[*].updatedAt"
+
+  - name: "创建用户 (POST)"
+    method: "POST"
+    before: "http://localhost:8000/v1/users"
+    after: "http://localhost:8001/v1/users"
+    headers:
+      Content-Type: "application/json"
+    body:
+      name: "Test User"
+      email: "test@example.com"
+    ignore_fields:
+      - "id"
+      - "createdAt"
+      - "updatedAt"
+
+  - name: "获取订单详情 (GET)"
+    method: "GET"
+    before: "http://localhost:8000/v1/orders/123"
+    after: "http://localhost:8001/v1/orders/123"
+    ignore_fields:
+      - "processedAt"

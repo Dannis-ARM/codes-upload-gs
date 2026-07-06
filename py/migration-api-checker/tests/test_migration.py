@@ -6,23 +6,10 @@ from pathlib import Path
 
 import pytest
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from migration_checker.config import load_config, Config
 from migration_checker.client import fetch_response
 from migration_checker.comparator import compare_responses
 from migration_checker.reporter import get_reporter
-
-
-def pytest_addoption(parser):
-    """Add custom command line options."""
-    parser.addoption(
-        "--config",
-        action="store",
-        default="cfgs.yaml",
-        help="Path to configuration file",
-    )
 
 
 @pytest.fixture(scope="session")

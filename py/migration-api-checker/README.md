@@ -13,6 +13,18 @@
 
 ## Quick Start
 
+### Try the Demo
+
+```bash
+# Terminal 1 - Start mock servers
+cd py/migration-api-checker
+uv run python demo_server.py both
+
+# Terminal 2 - Run tests
+cd py/migration-api-checker
+uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml
+```
+
 ### 1. Install dependencies
 
 ```bash
