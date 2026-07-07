@@ -22,7 +22,8 @@ class BeforeHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
     def do_GET(self):
-        if self.path == "/v1/users":
+        if self.path.startswith("/v1/users"):
+            # Support query params like ?page=1&size=10
             self._json_response({
                 "data": [
                     {"id": 1, "name": "Alice", "email": "alice@example.com", "createdAt": "2024-01-01", "updatedAt": time.strftime("%Y-%m-%d")},
@@ -85,7 +86,7 @@ class AfterHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
     def do_GET(self):
-        if self.path == "/v1/users":
+        if self.path.startswith("/v1/users"):
             # Same as before (should pass)
             self._json_response({
                 "data": [

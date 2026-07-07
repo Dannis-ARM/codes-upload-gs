@@ -116,12 +116,18 @@ class Reporter:
         """Save full report to file and return the path."""
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
 
-        # Save JSON report
+        # Save JSON report with emoji status
+        results_with_emoji = []
+        for r in self.results:
+            result_dict = asdict(r)
+            result_dict["status_emoji"] = "✅" if r.success else "❌"
+            results_with_emoji.append(result_dict)
+
         json_path = os.path.join(self.log_dir, f"report_{timestamp}.json")
         report_data = {
             "start_time": self.start_time.isoformat(),
             "end_time": datetime.now().isoformat(),
-            "results": [asdict(r) for r in self.results],
+            "results": results_with_emoji,
             "summary": {
                 "total": len(self.results),
                 "passed": sum(1 for r in self.results if r.success),
@@ -153,8 +159,11 @@ class Reporter:
         filename = f"worker_{worker_id}_{timestamp}.json"
         filepath = os.path.join(self.log_dir, filename)
 
+        result_dict = asdict(result)
+        result_dict["status_emoji"] = "✅" if result.success else "❌"
+
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump([asdict(result)], f, indent=2, ensure_ascii=False)
+            json.dump([result_dict], f, indent=2, ensure_ascii=False)
 
         return filepath
 

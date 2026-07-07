@@ -47,3 +47,11 @@ apis:
     method: "GET"
     before: "http://localhost:8000/v1/status"
     after: "http://localhost:8001/v1/status"
+
+  - name: "✅ Query Params 直接写在 URL 里 (相同)"
+    method: "GET"
+    before: "http://localhost:8000/v1/users?page=1&size=10"
+    after: "http://localhost:8001/v1/users?page=1&size=10"
+    ignore_fields:
+      - "timestamp"
+      - "data[*].updatedAt"

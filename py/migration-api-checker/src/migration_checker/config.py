@@ -4,6 +4,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import yaml
 from dotenv import load_dotenv

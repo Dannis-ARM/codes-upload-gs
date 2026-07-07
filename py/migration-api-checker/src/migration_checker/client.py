@@ -41,7 +41,7 @@ def _parse_response_body(response: httpx.Response) -> Tuple[Any, str]:
 def _fetch_with_retry(
     client: httpx.Client,
     method: str,
-    url: str,
+    original_url: str,
     headers: Dict[str, str],
     params: Dict[str, Any],
     body: Optional[Dict[str, Any]],
@@ -61,13 +61,13 @@ def _fetch_with_retry(
             if body is not None:
                 kwargs["json"] = body
 
-            response = client.request(method, url, **kwargs)
+            response = client.request(method, original_url, **kwargs)
 
             elapsed = time.time() - start_time
             parsed_body, raw_body = _parse_response_body(response)
 
             return Response(
-                url=str(response.url),
+                url=original_url,  # Use the original URL from config, not httpx's constructed one
                 status_code=response.status_code,
                 headers=dict(response.headers),
                 body=parsed_body,
@@ -100,14 +100,14 @@ def fetch_response(
     Returns:
         Response object.
     """
-    url = api_case.before if target == "before" else api_case.after
+    original_url = api_case.before if target == "before" else api_case.after
     headers = _merge_headers(global_config.common_headers, api_case.headers)
 
-    with httpx.Client(timeout=global_config.timeout, follow_redirects=True) as client:
+    with httpx.Client(timeout=global_config.timeout, follow_redirects=True, verify=False) as client:
         return _fetch_with_retry(
             client=client,
             method=api_case.method,
-            url=url,
+            original_url=original_url,
             headers=headers,
             params=api_case.params,
             body=api_case.body,
