@@ -3,6 +3,7 @@
 import time
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 import httpx
 
@@ -42,8 +43,8 @@ def _fetch_with_retry(
     client: httpx.Client,
     method: str,
     original_url: str,
+    final_url: str,
     headers: Dict[str, str],
-    params: Dict[str, Any],
     body: Optional[Dict[str, Any]],
     retries: int,
 ) -> Response:
@@ -56,12 +57,11 @@ def _fetch_with_retry(
 
             kwargs: Dict[str, Any] = {
                 "headers": headers,
-                "params": params,
             }
             if body is not None:
                 kwargs["json"] = body
 
-            response = client.request(method, original_url, **kwargs)
+            response = client.request(method, final_url, **kwargs)
 
             elapsed = time.time() - start_time
             parsed_body, raw_body = _parse_response_body(response)
@@ -103,13 +103,34 @@ def fetch_response(
     original_url = api_case.before if target == "before" else api_case.after
     headers = _merge_headers(global_config.common_headers, api_case.headers)
 
+    # Parse URL and extract query params
+    parsed = urlparse(original_url)
+    url_query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+    # Merge: config params override URL params
+    merged_params = {**url_query_params, **api_case.params}
+
+    # Build final URL with manually constructed query (for special character passthrough)
+    if merged_params:
+        # Manually construct query string to preserve special characters
+        query_parts = []
+        for k, v in merged_params.items():
+            if v is None:
+                query_parts.append(f"{k}")
+            else:
+                query_parts.append(f"{k}={v}")
+        final_query = "&".join(query_parts)
+        parsed = parsed._replace(query=final_query)
+
+    final_url = urlunparse(parsed)
+
     with httpx.Client(timeout=global_config.timeout, follow_redirects=True, verify=False) as client:
         return _fetch_with_retry(
             client=client,
             method=api_case.method,
             original_url=original_url,
+            final_url=final_url,
             headers=headers,
-            params=api_case.params,
             body=api_case.body,
             retries=global_config.retries,
         )
