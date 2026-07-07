@@ -53,6 +53,13 @@ class Reporter:
         error: str = "",
     ) -> None:
         """Record a test result."""
+        def to_json_str(data: Any) -> str:
+            if data is None:
+                return "null"
+            if isinstance(data, str):
+                return data
+            return json.dumps(data, ensure_ascii=False)
+
         self.results.append(TestResult(
             name=name,
             success=comparison.match and not error,
@@ -62,8 +69,8 @@ class Reporter:
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
-            before_body=json.dumps(before_resp.body, ensure_ascii=False),
-            after_body=json.dumps(after_resp.body, ensure_ascii=False),
+            before_body=to_json_str(before_resp.body),
+            after_body=to_json_str(after_resp.body),
             diff=comparison.diff,
             error=error,
         ))

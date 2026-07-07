@@ -79,6 +79,13 @@ def test_api_consistency(api_case, config, reporter):
         )
 
         # Create test result object
+        def to_json_str(data: Any) -> str:
+            if data is None:
+                return "null"
+            if isinstance(data, str):
+                return data
+            return json.dumps(data, ensure_ascii=False)
+
         result = TestResult(
             name=api_case.name,
             success=comparison.match,
@@ -88,8 +95,8 @@ def test_api_consistency(api_case, config, reporter):
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
-            before_body=json.dumps(before_resp.body, ensure_ascii=False),
-            after_body=json.dumps(after_resp.body, ensure_ascii=False),
+            before_body=to_json_str(before_resp.body),
+            after_body=to_json_str(after_resp.body),
             diff=comparison.diff if not comparison.match else "",
             error="",
         )
@@ -131,6 +138,13 @@ def test_api_consistency(api_case, config, reporter):
 
         from migration_checker.comparator import ComparisonResult
 
+        def to_json_str(data: Any) -> str:
+            if data is None:
+                return "null"
+            if isinstance(data, str):
+                return data
+            return json.dumps(data, ensure_ascii=False)
+
         result = TestResult(
             name=api_case.name,
             success=False,
@@ -140,8 +154,8 @@ def test_api_consistency(api_case, config, reporter):
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
-            before_body=json.dumps(before_resp.body, ensure_ascii=False),
-            after_body=json.dumps(after_resp.body, ensure_ascii=False),
+            before_body=to_json_str(before_resp.body),
+            after_body=to_json_str(after_resp.body),
             diff="",
             error=error_msg,
         )
