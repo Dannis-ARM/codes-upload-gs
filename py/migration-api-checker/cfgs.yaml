@@ -18,10 +18,11 @@ apis:
     params:
       page: 1
       size: 20
-    ignore_fields:
-      - "timestamp"
-      - "requestId"
-      - "data[*].updatedAt"
+    compare:
+      exclude_paths:
+        - "root['timestamp']"
+        - "root['requestId']"
+        - "root['data'][*]['updatedAt']"
 
   - name: "创建用户"
     method: "POST"
@@ -33,10 +34,11 @@ apis:
     body:
       name: "Test User"
       email: "test@example.com"
-    ignore_fields:
-      - "id"
-      - "createdAt"
-      - "updatedAt"
+    compare:
+      exclude_paths:
+        - "root['id']"
+        - "root['createdAt']"
+        - "root['updatedAt']"
 
   - name: "获取订单详情"
     method: "GET"
@@ -44,5 +46,6 @@ apis:
     after: "https://new-api.example.com/v1/orders/123"
     headers:
       Authorization: "Bearer ${API_TOKEN}"
-    ignore_fields:
-      - "processedAt"
+    compare:
+      exclude_paths:
+        - "root['processedAt']"

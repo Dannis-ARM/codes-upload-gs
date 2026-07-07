@@ -6,11 +6,14 @@
 
 - 使用 pytest 进行测试
 - 支持 YAML 配置文件定义 API
-- 支持忽略指定字段（如时间戳、requestId 等）
+- **使用 DeepDiff 做响应对比**，支持强大的 ignore 机制
 - 支持环境变量替换
 - 彩色终端输出和详细日志报告
 - 可选重试机制
-- 支持多线程并行测试 (`pytest-xdist`)
+- 支持多线程并行测试（`pytest-xdist`）
+- 忽略 SSL 证书验证（方便测试环境）
+- Query Params 可写在 URL 里或单独配置，自动合并
+- 特殊字符透传（`[]`、`.` 等原样保留）
 
 ## Quick Start
 
@@ -35,9 +38,10 @@ uv sync
 
 ### 2. Configure your APIs
 
-Copy `cfgs.yaml` and edit it:
+Copy `cfgs.demo.yaml` and edit it:
 
 ```bash
+cp cfgs.demo.yaml cfgs.yaml
 cp .env.example .env
 # Edit .env with your API tokens
 # Edit cfgs.yaml with your API endpoints
@@ -79,30 +83,81 @@ global:
 apis:
   - name: "API Name"
     method: "GET"  # HTTP method: GET, POST, PUT, DELETE, PATCH
-    before: "https://old-api.example.com/path"
-    after: "https://new-api.example.com/path"
+    before: "https://old-api.example.com/path?param1=value1"  # Query params can be in URL
+    after: "https://new-api.example.com/path?param1=value1"
     headers:       # Request headers (optional)
       Authorization: "Bearer ${API_TOKEN}"  # Env var supported
-    params:        # Query parameters (optional)
+    params:        # Query parameters (optional, merged with URL params, config overrides URL)
       key: value
     body:          # JSON request body (optional, for POST/PUT)
       field: value
-    ignore_fields: # Fields to ignore in comparison
-      - "timestamp"
-      - "data[*].updatedAt"  # JSONPath-like pattern
+    compare:       # DeepDiff comparison options (optional)
+      exclude_paths:
+        - "root['timestamp']"
+        - "root['data'][*]['updatedAt']"
+      exclude_regex_paths:
+        - "root\\['data'\\]\\[\\d+\\]\\['createdAt'\\]"
+      ignore_order: false
+      ignore_numeric_type_changes: true
 ```
 
-### Ignore Fields Syntax
+### Query Params
 
-- Simple field: `"timestamp"`
-- Nested field: `"data.createdAt"`
-- Array wildcard: `"data[*].id"`
-- Specific index: `"items[0].name"`
+Query params 可以直接写在 URL 里，也可以放在 `params` 配置里：
+- 如果两者同时存在，会合并，`params` 配置覆盖 URL 里的
+- 特殊字符如 `[]`、`.` 等会透传，不做 URL encode
+
+### Compare Options (DeepDiff)
+
+使用 DeepDiff 原生配置，详细文档：https://zepworks.com/deepdiff/current/diff.html
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `exclude_paths` | `List[str]` | `[]` | 要忽略的具体路径，例如 `"root['timestamp']"` |
+| `exclude_regex_paths` | `List[str]` | `[]` | 要忽略的路径正则表达式 |
+| `ignore_order` | `bool` | `false` | 是否忽略数组顺序 |
+| `ignore_numeric_type_changes` | `bool` | `true` | 是否忽略数字类型差异（`1` vs `1.0`） |
+
+### Path Syntax Examples
+
+DeepDiff 使用 Python repr 风格的路径：
+
+| Description | Syntax |
+|-------------|--------|
+| 根级字段 | `"root['timestamp']"` |
+| 嵌套字段 | `"root['data']['user']['id']"` |
+| 数组通配符 | `"root['data'][*]['updatedAt']"` |
+| 数组索引 | `"root['items'][0]['name']"` |
+| 正则 | `r"root\['data'\]\[\d+\]\['createdAt'\]"` |
+
+### BREAKING CHANGE: Migration from v0.1.0
+
+旧版使用 `ignore_fields`，已替换为 `compare` 配置：
+
+**Before:**
+```yaml
+ignore_fields:
+  - "timestamp"
+  - "data[*].updatedAt"
+```
+
+**After:**
+```yaml
+compare:
+  exclude_paths:
+    - "root['timestamp']"
+    - "root['data'][*]['updatedAt']"
+```
 
 ## Output
 
 - Terminal: Colored test results and diffs
 - `logs/`: Detailed logs and JSON reports
+
+## ADRs
+
+重要架构决策记录在 [docs/adr/](docs/adr/)：
+- [0001: Use DeepDiff for Response Comparison](docs/adr/0001-use-deepdiff-for-comparison.md)
 
 ## License
 

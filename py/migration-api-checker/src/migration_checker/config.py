@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
+from .comparator import CompareOptions
+
 
 @dataclass
 class GlobalConfig:
@@ -28,7 +30,7 @@ class ApiCase:
     headers: Dict[str, str] = field(default_factory=dict)
     params: Dict[str, Any] = field(default_factory=dict)
     body: Optional[Dict[str, Any]] = None
-    ignore_fields: List[str] = field(default_factory=list)
+    compare: CompareOptions = field(default_factory=CompareOptions)
 
 
 @dataclass
@@ -90,6 +92,13 @@ def load_config(config_path: str = "cfgs.yaml") -> Config:
     # Parse API cases
     apis: List[ApiCase] = []
     for api_raw in data.get("apis", []):
+        compare_raw = api_raw.get("compare", {})
+        compare = CompareOptions(
+            exclude_paths=compare_raw.get("exclude_paths", []),
+            exclude_regex_paths=compare_raw.get("exclude_regex_paths", []),
+            ignore_order=compare_raw.get("ignore_order", False),
+            ignore_numeric_type_changes=compare_raw.get("ignore_numeric_type_changes", True),
+        )
         apis.append(ApiCase(
             name=api_raw.get("name", f"API-{len(apis)+1}"),
             method=api_raw.get("method", "GET").upper(),
@@ -98,7 +107,7 @@ def load_config(config_path: str = "cfgs.yaml") -> Config:
             headers=api_raw.get("headers", {}),
             params=api_raw.get("params", {}),
             body=api_raw.get("body"),
-            ignore_fields=api_raw.get("ignore_fields", []),
+            compare=compare,
         ))
 
     return Config(global_config=global_config, apis=apis)

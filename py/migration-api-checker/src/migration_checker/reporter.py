@@ -27,8 +27,6 @@ class TestResult:
     after_status: int
     before_elapsed: float
     after_elapsed: float
-    before_body: str = None
-    after_body: str = None
     diff: str = ""
     error: str = ""
 
@@ -53,13 +51,6 @@ class Reporter:
         error: str = "",
     ) -> None:
         """Record a test result."""
-        def to_json_str(data: Any) -> str:
-            if data is None:
-                return "null"
-            if isinstance(data, str):
-                return data
-            return json.dumps(data, ensure_ascii=False)
-
         self.results.append(TestResult(
             name=name,
             success=comparison.match and not error,
@@ -69,8 +60,6 @@ class Reporter:
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
-            before_body=to_json_str(before_resp.body),
-            after_body=to_json_str(after_resp.body),
             diff=comparison.diff,
             error=error,
         ))
@@ -104,21 +93,17 @@ class Reporter:
                 if r.error:
                     self.console.print(f"    [red]Error:[/red] {r.error}")
                 if r.diff:
-                    # Parse diff lines and render with colors
+                    # Render DeepDiff output with basic coloring
                     diff_lines = r.diff.splitlines()
                     if diff_lines:
                         formatted_diff = Text()
                         for line in diff_lines:
-                            if line.startswith('---'):
-                                formatted_diff.append(line + "\n", style="blue")
-                            elif line.startswith('+++'):
-                                formatted_diff.append(line + "\n", style="blue")
-                            elif line.startswith('-'):
+                            if line.startswith('Values changed') or line.startswith('Dictionary item') or line.startswith('Item added') or line.startswith('Item removed'):
+                                formatted_diff.append(line + "\n", style="yellow")
+                            elif 'old_value:' in line:
                                 formatted_diff.append(line + "\n", style="red")
-                            elif line.startswith('+'):
+                            elif 'new_value:' in line:
                                 formatted_diff.append(line + "\n", style="green")
-                            elif line.startswith('@'):
-                                formatted_diff.append(line + "\n", style="cyan")
                             else:
                                 formatted_diff.append(line + "\n", style="white")
                         self.console.print(Panel(formatted_diff, title="Response Diff", border_style="yellow"))
