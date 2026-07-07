@@ -345,11 +345,16 @@ class Reporter:
             return ""
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
 
-    def _format_diff_html(self, diff_text: str) -> str:
-        """Format diff text into HTML with color coding."""
+    def _format_diff_html(self, diff_text: str, max_lines: int = 20) -> str:
+        """Format diff text into HTML with color coding, truncating if too long."""
         lines = diff_text.split("\n")
         html_lines = []
-        for line in lines:
+        truncated = False
+
+        for idx, line in enumerate(lines):
+            if idx >= max_lines:
+                truncated = True
+                break
             line_stripped = line.strip()
             if line_stripped.startswith("Values changed") or line_stripped.startswith("Dictionary item") or \
                line_stripped.startswith("Item added") or line_stripped.startswith("Item removed") or \
@@ -363,6 +368,10 @@ class Reporter:
                 html_lines.append(f'<div class="diff-line normal">{self._escape_html(line)}</div>')
             else:
                 html_lines.append(f'<div class="diff-line normal">&nbsp;</div>')
+
+        if truncated:
+            html_lines.append(f'<div class="diff-line normal" style="color: #fbbf24; font-style: italic;">... (truncated, see JSON report for full diff)</div>')
+
         return "".join(html_lines)
 
     def save_worker_result(self, worker_id: str, result: ApiTestResult) -> str:
@@ -476,10 +485,14 @@ class Reporter:
                     return ""
                 return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
 
-            def format_diff_html(diff_text: str) -> str:
+            def format_diff_html(diff_text: str, max_lines: int = 20) -> str:
                 lines = diff_text.split("\n")
                 html_lines = []
-                for line in lines:
+                truncated = False
+                for idx, line in enumerate(lines):
+                    if idx >= max_lines:
+                        truncated = True
+                        break
                     line_stripped = line.strip()
                     if line_stripped.startswith("Values changed") or line_stripped.startswith("Dictionary item") or \
                        line_stripped.startswith("Item added") or line_stripped.startswith("Item removed") or \
@@ -493,6 +506,8 @@ class Reporter:
                         html_lines.append(f'<div class="diff-line normal">{escape_html(line)}</div>')
                     else:
                         html_lines.append(f'<div class="diff-line normal">&nbsp;</div>')
+                if truncated:
+                    html_lines.append(f'<div class="diff-line normal" style="color: #fbbf24; font-style: italic;">... (truncated, see JSON report for full diff)</div>')
                 return "".join(html_lines)
 
             test_rows = []
