@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 from pathlib import Path
 from dataclasses import asdict
 
@@ -87,6 +88,8 @@ def test_api_consistency(api_case, config, reporter):
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
+            before_body=json.dumps(before_resp.body, ensure_ascii=False),
+            after_body=json.dumps(after_resp.body, ensure_ascii=False),
             diff=comparison.diff if not comparison.match else "",
             error="",
         )
@@ -137,6 +140,8 @@ def test_api_consistency(api_case, config, reporter):
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
+            before_body=json.dumps(before_resp.body, ensure_ascii=False),
+            after_body=json.dumps(after_resp.body, ensure_ascii=False),
             diff="",
             error=error_msg,
         )

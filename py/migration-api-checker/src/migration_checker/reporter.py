@@ -27,6 +27,8 @@ class TestResult:
     after_status: int
     before_elapsed: float
     after_elapsed: float
+    before_body: str = None
+    after_body: str = None
     diff: str = ""
     error: str = ""
 
@@ -60,6 +62,8 @@ class Reporter:
             after_status=after_resp.status_code,
             before_elapsed=before_resp.elapsed_seconds,
             after_elapsed=after_resp.elapsed_seconds,
+            before_body=json.dumps(before_resp.body, ensure_ascii=False),
+            after_body=json.dumps(after_resp.body, ensure_ascii=False),
             diff=comparison.diff,
             error=error,
         ))
