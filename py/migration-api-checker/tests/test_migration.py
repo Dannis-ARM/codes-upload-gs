@@ -11,7 +11,7 @@ import pytest
 from migration_checker.config import load_config, Config
 from migration_checker.client import fetch_response
 from migration_checker.comparator import compare_responses
-from migration_checker.reporter import get_reporter, TestResult
+from migration_checker.reporter import get_reporter, ApiTestResult
 
 
 @pytest.fixture(scope="session")
@@ -79,7 +79,7 @@ def test_api_consistency(api_case, config, reporter):
         )
 
         # Create test result object
-        result = TestResult(
+        result = ApiTestResult(
             name=api_case.name,
             success=comparison.match,
             before_url=before_resp.url,
@@ -129,7 +129,7 @@ def test_api_consistency(api_case, config, reporter):
 
         from migration_checker.comparator import ComparisonResult
 
-        result = TestResult(
+        result = ApiTestResult(
             name=api_case.name,
             success=False,
             before_url=before_resp.url,

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
-from .comparator import CompareOptions
+from .types import CompareOptions
 
 
 @dataclass

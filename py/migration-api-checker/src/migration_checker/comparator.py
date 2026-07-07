@@ -1,27 +1,11 @@
 """Response comparison logic using DeepDiff."""
 
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any
 from dataclasses import dataclass
 
 from deepdiff import DeepDiff
 
-if TYPE_CHECKING:
-    from .client import Response
-
-
-@dataclass
-class CompareOptions:
-    """Options for response comparison using DeepDiff."""
-    exclude_paths: List[str] = None
-    exclude_regex_paths: List[str] = None
-    ignore_order: bool = False
-    ignore_numeric_type_changes: bool = True
-
-    def __post_init__(self):
-        if self.exclude_paths is None:
-            self.exclude_paths = []
-        if self.exclude_regex_paths is None:
-            self.exclude_regex_paths = []
+from .types import Response, CompareOptions
 
 
 @dataclass
@@ -29,12 +13,12 @@ class ComparisonResult:
     """Result of response comparison."""
     match: bool
     diff: str = ""
-    details: Dict[str, Any] = None
+    details: Any = None
 
 
 def compare_responses(
-    before_resp: "Response",
-    after_resp: "Response",
+    before_resp: Response,
+    after_resp: Response,
     compare_options: CompareOptions = None,
 ) -> ComparisonResult:
     """
@@ -51,7 +35,7 @@ def compare_responses(
     if compare_options is None:
         compare_options = CompareOptions()
 
-    details: Dict[str, Any] = {
+    details = {
         "before_url": before_resp.url,
         "after_url": after_resp.url,
         "before_status": before_resp.status_code,

@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 
 from rich.console import Console
 from rich.table import Table
@@ -14,21 +14,7 @@ from rich.text import Text
 
 from .client import Response
 from .comparator import ComparisonResult
-
-
-@dataclass
-class TestResult:
-    """Result of a single test case."""
-    name: str
-    success: bool
-    before_url: str
-    after_url: str
-    before_status: int
-    after_status: int
-    before_elapsed: float
-    after_elapsed: float
-    diff: str = ""
-    error: str = ""
+from .types import ApiTestResult
 
 
 class Reporter:
@@ -37,7 +23,7 @@ class Reporter:
     def __init__(self, log_dir: str = "logs"):
         self.log_dir = log_dir
         self.console = Console()
-        self.results: List[TestResult] = []
+        self.results: List[ApiTestResult] = []
         self.start_time = datetime.now()
 
         os.makedirs(log_dir, exist_ok=True)
@@ -51,7 +37,7 @@ class Reporter:
         error: str = "",
     ) -> None:
         """Record a test result."""
-        self.results.append(TestResult(
+        self.results.append(ApiTestResult(
             name=name,
             success=comparison.match and not error,
             before_url=before_resp.url,
@@ -149,7 +135,7 @@ class Reporter:
 
         return json_path
 
-    def save_worker_result(self, worker_id: str, result: TestResult) -> str:
+    def save_worker_result(self, worker_id: str, result: ApiTestResult) -> str:
         """Save a single test result from a worker to its own file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"worker_{worker_id}_{timestamp}.json"
@@ -164,11 +150,11 @@ class Reporter:
         return filepath
 
     @staticmethod
-    def load_and_merge(log_dir: str = "logs") -> str:
+    def load_and_merge(log_dir: str = "logs") -> Optional[str]:
         """Load all worker result files and merge into one report."""
         logs_path = Path(log_dir)
         if not logs_path.exists():
-            return ""
+            return None
 
         all_results: List[Dict] = []
         worker_files = list(logs_path.glob("worker_*.json"))
@@ -182,7 +168,7 @@ class Reporter:
                 continue
 
         if not all_results:
-            return ""
+            return None
 
         # Create merged report
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

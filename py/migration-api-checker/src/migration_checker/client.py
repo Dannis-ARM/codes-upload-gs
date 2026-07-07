@@ -2,23 +2,12 @@
 
 import time
 from typing import Any, Dict, Optional, Tuple
-from dataclasses import dataclass
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 import httpx
 
 from .config import ApiCase, GlobalConfig
-
-
-@dataclass
-class Response:
-    """HTTP response container."""
-    url: str
-    status_code: int
-    headers: Dict[str, str]
-    body: Any  # Parsed JSON or text
-    raw_body: str
-    elapsed_seconds: float
+from .types import Response
 
 
 def _merge_headers(global_headers: Dict[str, str], api_headers: Dict[str, str]) -> Dict[str, str]:
