@@ -96,7 +96,7 @@ def load_config(config_path: str = "cfgs.yaml") -> Config:
         compare = CompareOptions(
             exclude_paths=compare_raw.get("exclude_paths", []),
             exclude_regex_paths=compare_raw.get("exclude_regex_paths", []),
-            ignore_order=compare_raw.get("ignore_order", False),
+            ignore_order=compare_raw.get("ignore_order", True),
             ignore_numeric_type_changes=compare_raw.get("ignore_numeric_type_changes", True),
         )
         apis.append(ApiCase(

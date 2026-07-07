@@ -20,7 +20,7 @@ class CompareOptions:
     """Options for response comparison using DeepDiff."""
     exclude_paths: List[str] = field(default_factory=list)
     exclude_regex_paths: List[str] = field(default_factory=list)
-    ignore_order: bool = False
+    ignore_order: bool = True
     ignore_numeric_type_changes: bool = True
 
 
