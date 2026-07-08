@@ -29,13 +29,16 @@ def reporter():
 
 @pytest.fixture(scope="session", autouse=True)
 def report_summary(request, reporter):
-    """Print and save report at the end of session (single-threaded only)."""
+    """Print and save report at the end of session (only for non-worker mode)."""
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     yield
-    if not worker_id or worker_id == "master":
-        reporter.print_summary()
-        report_path = reporter.save_report()
-        print(f"\nFull report saved to: {report_path}")
+    # If we have worker_id, conftest.py's pytest_sessionfinish will handle merging
+    if worker_id:
+        return
+    # For non-worker mode, use the reporter instance normally
+    reporter.print_summary()
+    report_path = reporter.save_report()
+    print(f"\nFull report saved to: {report_path}")
 
 
 def pytest_generate_tests(metafunc):
