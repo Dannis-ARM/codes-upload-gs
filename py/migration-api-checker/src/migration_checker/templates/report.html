@@ -9,18 +9,24 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 24px; }
         h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
-        .summary { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-        .summary-card { padding: 16px 24px; border-radius: 8px; color: white; font-weight: 600; }
+        .summary { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+        .summary-card { padding: 16px 24px; border-radius: 8px; color: white; font-weight: 600; cursor: pointer; transition: transform 0.1s, filter 0.1s; user-select: none; }
+        .summary-card:hover:not(.duration) { transform: scale(1.02); }
+        .summary-card:active:not(.duration) { transform: scale(0.98); }
         .summary-card.total { background: #6366f1; }
         .summary-card.passed { background: #10b981; }
         .summary-card.failed { background: #ef4444; }
-        .summary-card.duration { background: #8b5cf6; }
+        .summary-card.duration { background: #8b5cf6; cursor: default; }
+        .summary-card.active { filter: brightness(0.85); box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+        .filter-indicator { color: #666; font-size: 14px; margin-bottom: 20px; min-height: 20px; }
+        .filter-indicator span { font-weight: 600; color: #333; }
         .meta { color: #666; font-size: 14px; margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 16px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
         th { background: #f9fafb; font-weight: 600; color: #374151; position: sticky; top: 0; }
         .pass { background: #ecfdf5; }
         .fail { background: #fef2f2; }
+        tr.hidden { display: none; }
         .status-cell { font-weight: 600; }
         .name-cell { font-weight: 500; max-width: 300px; }
         .name-cell .toggle-btn { width: 100%; display: inline-block; vertical-align: bottom; }
@@ -53,6 +59,7 @@
         <h1>Migration API Check Report</h1>
         <div class="meta">$meta</div>
         <div class="summary">$summary</div>
+        <div class="filter-indicator"></div>
         <table>
             <thead>
                 <tr>
@@ -70,10 +77,74 @@
         </table>
     </div>
     <script>
+        let currentFilter = 'all';
+
         function toggleDetails(id) {
             const row = document.getElementById(id);
             row.classList.toggle('show');
         }
+
+        function setFilter(filter) {
+            const cards = document.querySelectorAll('.summary-card[data-filter]');
+            const rows = document.querySelectorAll('tbody tr[data-status]');
+            const indicator = document.querySelector('.filter-indicator');
+
+            // Toggle: if clicking the same filter, clear it
+            if (currentFilter === filter) {
+                currentFilter = 'all';
+            } else {
+                currentFilter = filter;
+            }
+
+            // Update card active states
+            cards.forEach(card => {
+                const cardFilter = card.getAttribute('data-filter');
+                if (cardFilter === currentFilter) {
+                    card.classList.add('active');
+                } else {
+                    card.classList.remove('active');
+                }
+            });
+
+            // Update row visibility
+            rows.forEach(row => {
+                const status = row.getAttribute('data-status');
+                const detailsRow = row.nextElementSibling;
+                if (currentFilter === 'all' || status === currentFilter) {
+                    row.classList.remove('hidden');
+                    // Don't touch details-row show state - let toggleDetails handle it
+                } else {
+                    row.classList.add('hidden');
+                    // Also hide details row if main row is hidden
+                    if (detailsRow && detailsRow.classList.contains('details-row')) {
+                        detailsRow.classList.remove('show');
+                    }
+                }
+            });
+
+            // Update indicator
+            const filterLabels = {
+                'all': 'All tests',
+                'pass': 'Passed tests',
+                'fail': 'Failed tests'
+            };
+            if (currentFilter === 'all') {
+                indicator.textContent = '';
+            } else {
+                indicator.innerHTML = 'Showing: <span>' + filterLabels[currentFilter] + '</span> (click the active card to show all)';
+            }
+        }
+
+        // Initialize filter click handlers
+        document.addEventListener('DOMContentLoaded', () => {
+            const cards = document.querySelectorAll('.summary-card[data-filter]');
+            cards.forEach(card => {
+                card.addEventListener('click', () => {
+                    const filter = card.getAttribute('data-filter');
+                    setFilter(filter);
+                });
+            });
+        });
     </script>
 </body>
 </html>

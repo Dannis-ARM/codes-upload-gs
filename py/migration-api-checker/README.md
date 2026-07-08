@@ -4,16 +4,18 @@
 
 ## Features
 
-- 使用 pytest 进行测试
-- 支持 YAML 配置文件定义 API
-- **使用 DeepDiff 做响应对比**，支持强大的 ignore 机制
-- 支持环境变量替换
-- 彩色终端输出和详细日志报告
-- 可选重试机制
-- 支持多线程并行测试（`pytest-xdist`）
-- 忽略 SSL 证书验证（方便测试环境）
+- pytest 测试框架
+- YAML 配置定义 API
+- **DeepDiff 响应对比** + 快速预检查（数组长度、dict keys）
+- 环境变量替换
+- 彩色终端输出 + 详细 JSON/HTML 报告
+- 重试机制
+- 并行测试（`pytest-xdist`）
+- 忽略 SSL 证书验证
 - Query Params 可写在 URL 里或单独配置，自动合并
-- 特殊字符透传（`[]`、`.` 等原样保留）
+- 特殊字符透传（`[]`、`.` 等）
+- Test Name 超长智能截断（>50字符）+ hover 显示完整名称
+- Duration 毫秒级精度显示
 
 ## Quick Start
 
@@ -25,7 +27,6 @@ cd py/migration-api-checker
 uv run python demo_server.py both
 
 # Terminal 2 - Run tests
-cd py/migration-api-checker
 uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml
 ```
 
@@ -67,6 +68,12 @@ uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml -n auto
 
 # Or specify number of workers
 uv run pytest tests/test_migration.py -v --config=cfgs.demo.yaml -n 4
+```
+
+Skip HTML report for faster runs:
+
+```bash
+SKIP_HTML=1 uv run pytest tests/test_migration.py -v --config=cfgs.yaml
 ```
 
 ## Configuration
@@ -113,9 +120,9 @@ Query params 可以直接写在 URL 里，也可以放在 `params` 配置里：
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `exclude_paths` | `List[str]` | `[]` | 要忽略的具体路径，例如 `"root['timestamp']"` |
+| `exclude_paths` | `List[str]` | `[]` | 要忽略的具体路径 |
 | `exclude_regex_paths` | `List[str]` | `[]` | 要忽略的路径正则表达式 |
-| `ignore_order` | `bool` | `false` | 是否忽略数组顺序 |
+| `ignore_order` | `bool` | `true` | 是否忽略数组顺序 |
 | `ignore_numeric_type_changes` | `bool` | `true` | 是否忽略数字类型差异（`1` vs `1.0`） |
 
 ### Path Syntax Examples
@@ -130,29 +137,20 @@ DeepDiff 使用 Python repr 风格的路径：
 | 数组索引 | `"root['items'][0]['name']"` |
 | 正则 | `r"root\['data'\]\[\d+\]\['createdAt'\]"` |
 
-### BREAKING CHANGE: Migration from v0.1.0
+### Performance Tips for Large Responses
 
-旧版使用 `ignore_fields`，已替换为 `compare` 配置：
+If you have APIs returning large arrays (1000+ items):
 
-**Before:**
-```yaml
-ignore_fields:
-  - "timestamp"
-  - "data[*].updatedAt"
-```
-
-**After:**
-```yaml
-compare:
-  exclude_paths:
-    - "root['timestamp']"
-    - "root['data'][*]['updatedAt']"
-```
+1. **Use `ignore_order: true`** if order doesn't matter
+2. **Add `exclude_paths`** for large arrays you don't need to compare
+3. **Use `SKIP_HTML=1`** for faster runs when you only need JSON/terminal output
+4. **Use parallel testing** with `-n auto`
 
 ## Output
 
 - Terminal: Colored test results and diffs
-- `logs/`: Detailed logs and JSON reports
+- `logs/current/`: Latest reports (JSON + HTML)
+- `logs/archive/`: Timestamped archived reports
 
 ## ADRs
 

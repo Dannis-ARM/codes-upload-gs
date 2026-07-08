@@ -145,7 +145,7 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
             name_cell = f'<span class="name-text{truncation_class}" title="{_escape_html(r.name)}">{_escape_html(r.name)}</span>'
 
         append(f"""
-        <tr class="{status_class}">
+        <tr class="{status_class}" data-status="{status_class}">
             <td class="status-cell">{status_text}</td>
             <td class="name-cell">
                 {name_cell}
@@ -198,9 +198,9 @@ def _generate_html_content(
 
     # Build summary cards
     summary_parts = [
-        f'<div class="summary-card total">Total: {total}</div>',
-        f'<div class="summary-card passed">Passed: {passed}</div>',
-        f'<div class="summary-card failed">Failed: {failed}</div>',
+        f'<div class="summary-card total" data-filter="all">Total: {total}</div>',
+        f'<div class="summary-card passed" data-filter="pass">Passed: {passed}</div>',
+        f'<div class="summary-card failed" data-filter="fail">Failed: {failed}</div>',
     ]
     if duration > 0:
         summary_parts.append(f'<div class="summary-card duration">Duration: {duration:.3f}s</div>')
