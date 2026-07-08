@@ -135,17 +135,21 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
             )
         details_content = "\n".join(details_parts) if details_parts else ""
 
-        # Build row
+        # Build row - CSS truncates long names, hover shows full
+        # Only failed tests with details are clickable
+        if details_content:
+            name_cell = f'<button class="toggle-btn" onclick="toggleDetails(\'{row_id}\')" title="{_escape_html(r.name)}">{_escape_html(r.name)}</button>'
+        else:
+            name_cell = f'<span class="name-text" title="{_escape_html(r.name)}">{_escape_html(r.name)}</span>'
+
         append(f"""
         <tr class="{status_class}">
             <td class="status-cell">{status_text}</td>
             <td class="name-cell">
-                <button class="toggle-btn" onclick="toggleDetails('{row_id}')">
-                    {_escape_html(r.name)}
-                </button>
+                {name_cell}
             </td>
-            <td class="url-cell"><span class="label">Before:</span> {_escape_html(r.before_url)}</td>
-            <td class="url-cell"><span class="label">After:</span> {_escape_html(r.after_url)}</td>
+            <td class="url-cell"><span class="label">Before:</span> <a href="{_escape_html(r.before_url)}" target="_blank" title="{_escape_html(r.before_url)}">{_escape_html(r.before_url)}</a></td>
+            <td class="url-cell"><span class="label">After:</span> <a href="{_escape_html(r.after_url)}" target="_blank" title="{_escape_html(r.after_url)}">{_escape_html(r.after_url)}</a></td>
             <td class="status-code">{r.before_status}</td>
             <td class="status-code">{r.after_status}</td>
             <td class="time">{r.before_elapsed:.3f}s</td>

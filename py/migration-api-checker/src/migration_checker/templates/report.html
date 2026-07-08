@@ -22,13 +22,17 @@
         .pass { background: #ecfdf5; }
         .fail { background: #fef2f2; }
         .status-cell { font-weight: 600; }
-        .name-cell { font-weight: 500; }
-        .url-cell { font-family: monospace; font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .name-cell { font-weight: 500; max-width: 300px; }
+        .name-cell .toggle-btn { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+        .url-cell { font-family: monospace; font-size: 12px; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .url-cell .label { color: #666; font-weight: 600; }
+        .url-cell a { color: #3b82f6; text-decoration: none; }
+        .url-cell a:hover { text-decoration: underline; }
         .status-code { font-family: monospace; text-align: center; }
         .time { font-family: monospace; text-align: right; }
         .toggle-btn { background: none; border: none; cursor: pointer; font-size: 14px; font-weight: 500; text-align: left; padding: 0; color: #3b82f6; }
         .toggle-btn:hover { text-decoration: underline; }
+        .name-text { font-size: 14px; font-weight: 500; color: #374151; }
         .details-row { display: none; }
         .details-row.show { display: table-row; }
         .details-content { padding: 16px; background: #1f2937; border-radius: 8px; margin: 8px 0; }
