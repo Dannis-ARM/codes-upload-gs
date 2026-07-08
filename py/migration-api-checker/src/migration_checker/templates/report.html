@@ -23,7 +23,10 @@
         .fail { background: #fef2f2; }
         .status-cell { font-weight: 600; }
         .name-cell { font-weight: 500; max-width: 300px; }
-        .name-cell .toggle-btn { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+        .name-cell .toggle-btn { width: 100%; display: inline-block; vertical-align: bottom; }
+        .name-cell .toggle-btn.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .name-cell .name-text { display: inline-block; }
+        .name-cell .name-text.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
         .url-cell { font-family: monospace; font-size: 12px; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .url-cell .label { color: #666; font-weight: 600; }
         .url-cell a { color: #3b82f6; text-decoration: none; }

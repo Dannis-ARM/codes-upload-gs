@@ -135,12 +135,14 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
             )
         details_content = "\n".join(details_parts) if details_parts else ""
 
-        # Build row - CSS truncates long names, hover shows full
-        # Only failed tests with details are clickable
+        # Build name cell - always show tooltip, only truncate if >50 chars
+        name_needs_truncation = len(r.name) > 50
+        truncation_class = " truncate" if name_needs_truncation else ""
+
         if details_content:
-            name_cell = f'<button class="toggle-btn" onclick="toggleDetails(\'{row_id}\')" title="{_escape_html(r.name)}">{_escape_html(r.name)}</button>'
+            name_cell = f'<button class="toggle-btn{truncation_class}" onclick="toggleDetails(\'{row_id}\')" title="{_escape_html(r.name)}">{_escape_html(r.name)}</button>'
         else:
-            name_cell = f'<span class="name-text" title="{_escape_html(r.name)}">{_escape_html(r.name)}</span>'
+            name_cell = f'<span class="name-text{truncation_class}" title="{_escape_html(r.name)}">{_escape_html(r.name)}</span>'
 
         append(f"""
         <tr class="{status_class}">
@@ -201,7 +203,7 @@ def _generate_html_content(
         f'<div class="summary-card failed">Failed: {failed}</div>',
     ]
     if duration > 0:
-        summary_parts.append(f'<div class="summary-card duration">Duration: {duration:.2f}s</div>')
+        summary_parts.append(f'<div class="summary-card duration">Duration: {duration:.3f}s</div>')
     summary = "".join(summary_parts)
 
     # Build test rows

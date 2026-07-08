@@ -16,6 +16,37 @@ class ComparisonResult:
     details: Any = None
 
 
+def _fast_check_diff(before: Any, after: Any) -> Optional[str]:
+    """
+    Fast pre-check for obvious differences before calling DeepDiff.
+    Returns a diff string if differences found, None otherwise.
+    """
+    # Check type
+    if type(before) != type(after):
+        return f"Type mismatch: {type(before)} != {type(after)}"
+
+    # Check list length first (performance optimization for large arrays)
+    if isinstance(before, list) and isinstance(after, list):
+        if len(before) != len(after):
+            return f"List length mismatch: {len(before)} != {len(after)}"
+
+    # Check dict keys first
+    if isinstance(before, dict) and isinstance(after, dict):
+        before_keys = set(before.keys())
+        after_keys = set(after.keys())
+        if before_keys != after_keys:
+            added = after_keys - before_keys
+            removed = before_keys - after_keys
+            parts = []
+            if added:
+                parts.append(f"Added keys: {sorted(added)}")
+            if removed:
+                parts.append(f"Removed keys: {sorted(removed)}")
+            return "Dict keys mismatch: " + ", ".join(parts)
+
+    return None
+
+
 def compare_responses(
     before_resp: Response,
     after_resp: Response,
@@ -50,7 +81,16 @@ def compare_responses(
             details=details,
         )
 
-    # 2. Compare bodies with DeepDiff
+    # 2. Fast pre-check (for large arrays/dicts)
+    fast_diff = _fast_check_diff(before_resp.body, after_resp.body)
+    if fast_diff:
+        return ComparisonResult(
+            match=False,
+            diff=fast_diff,
+            details=details,
+        )
+
+    # 3. Compare bodies with DeepDiff
     diff = DeepDiff(
         before_resp.body,
         after_resp.body,
@@ -58,7 +98,9 @@ def compare_responses(
         exclude_regex_paths=compare_options.exclude_regex_paths,
         ignore_order=compare_options.ignore_order,
         ignore_numeric_type_changes=compare_options.ignore_numeric_type_changes,
-        verbose_level=2,
+        verbose_level=1,  # 降低 verbose 级别，减少输出
+        cache_size=0,     # 禁用缓存，节省内存
+        view='tree',      # 使用 tree 视图，性能更好
     )
 
     if diff:
