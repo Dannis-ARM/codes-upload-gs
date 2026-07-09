@@ -113,7 +113,15 @@ def fetch_response(
 
     final_url = urlunparse(parsed)
 
-    with httpx.Client(timeout=global_config.timeout, follow_redirects=True, verify=False) as client:
+    # Use httpx.Timeout with longer read timeout for large JSON responses
+    # read = timeout * 2 (up to 300s max) to avoid 'read operation timed out'
+    timeout = httpx.Timeout(
+        connect=5.0,
+        read=min(global_config.timeout * 2, 300.0),
+        write=30.0,
+        pool=5.0,
+    )
+    with httpx.Client(timeout=timeout, follow_redirects=True, verify=False) as client:
         return _fetch_with_retry(
             client=client,
             method=api_case.method,
