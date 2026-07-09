@@ -121,8 +121,12 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
         status_text = "✅ PASS" if r.success else "❌ FAIL"
         row_id = f"test-{idx}"
 
-        # Build details content
+        # Build details content - always show full test name first
         details_parts: List[str] = []
+        details_parts.append(
+            f'<div class="name-section"><div class="section-title">Test Name</div>'
+            f'<div class="full-name">{_escape_html(r.name)}</div></div>'
+        )
         if r.error:
             details_parts.append(
                 f'<div class="error-section"><div class="section-title">Error</div>'
@@ -133,16 +137,14 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
             details_parts.append(
                 f'<div class="diff-section"><div class="section-title">Diff</div>{diff_html}</div>'
             )
-        details_content = "\n".join(details_parts) if details_parts else ""
+        details_content = "\n".join(details_parts)
 
         # Build name cell - always show tooltip, only truncate if >50 chars
         name_needs_truncation = len(r.name) > 50
         truncation_class = " truncate" if name_needs_truncation else ""
 
-        if details_content:
-            name_cell = f'<button class="toggle-btn{truncation_class}" onclick="toggleDetails(\'{row_id}\')" title="{_escape_html(r.name)}">{_escape_html(r.name)}</button>'
-        else:
-            name_cell = f'<span class="name-text{truncation_class}" title="{_escape_html(r.name)}">{_escape_html(r.name)}</span>'
+        # Always make test name clickable
+        name_cell = f'<button class="toggle-btn{truncation_class}" onclick="toggleDetails(\'{row_id}\')" title="{_escape_html(r.name)}">{_escape_html(r.name)}</button>'
 
         append(f"""
         <tr class="{status_class}" data-status="{status_class}">
@@ -150,22 +152,21 @@ def _generate_test_rows(results: List[ApiTestResult]) -> str:
             <td class="name-cell">
                 {name_cell}
             </td>
-            <td class="url-cell"><span class="label">Before:</span> <a href="{_escape_html(r.before_url)}" target="_blank" title="{_escape_html(r.before_url)}">{_escape_html(r.before_url)}</a></td>
-            <td class="url-cell"><span class="label">After:</span> <a href="{_escape_html(r.after_url)}" target="_blank" title="{_escape_html(r.after_url)}">{_escape_html(r.after_url)}</a></td>
+            <td class="url-cell"><a href="{_escape_html(r.before_url)}" target="_blank" title="{_escape_html(r.before_url)}">{_escape_html(r.before_url)}</a></td>
+            <td class="url-cell"><a href="{_escape_html(r.after_url)}" target="_blank" title="{_escape_html(r.after_url)}">{_escape_html(r.after_url)}</a></td>
             <td class="status-code">{r.before_status}</td>
             <td class="status-code">{r.after_status}</td>
             <td class="time">{r.before_elapsed:.3f}s</td>
             <td class="time">{r.after_elapsed:.3f}s</td>
         </tr>
         """)
-        if details_content:
-            append(f"""
-            <tr class="details-row" id="{row_id}">
-                <td colspan="8">
-                    <div class="details-content">{details_content}</div>
-                </td>
-            </tr>
-            """)
+        append(f"""
+        <tr class="details-row" id="{row_id}">
+            <td colspan="8">
+                <div class="details-content">{details_content}</div>
+            </td>
+        </tr>
+        """)
 
     return "".join(test_rows)
 
