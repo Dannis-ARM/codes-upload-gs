@@ -1,69 +1,85 @@
 #!/usr/bin/env python3
 """
-SFTP Directory Sync Tool - Sync remote directory to local using rsync over SSH/SFTP.
+SFTP Directory Sync Tool - Sync remote directory to local using sftp command.
 
 Features:
-- Incremental sync, only download changed/new files
-- No local file deletion (no --delete)
+- Full recursive download (no incremental sync)
+- No local file deletion, suitable for multi-source merge
 - Private key authentication
-- Dry run mode support
+- Dry run mode (list only)
 """
 
 import subprocess
 import argparse
 import sys
+import os
 
 
-def build_rsync_command(
+def build_sftp_batch_script(
+    remote_path: str,
+    local_path: str,
+    dry_run: bool = False,
+) -> str:
+    """
+    Build sftp batch script content.
+    """
+    lines = []
+
+    # Change to remote directory
+    lines.append(f"cd {remote_path}")
+
+    # Change to local directory
+    lines.append(f"lcd {local_path}")
+
+    if dry_run:
+        # Dry run: just list files
+        lines.append("ls -la")
+    else:
+        # Recursive get all files
+        lines.append("get -r .")
+
+    lines.append("quit")
+
+    return "\n".join(lines)
+
+
+def build_sftp_command(
     host: str,
     user: str,
     private_key: str,
-    remote_path: str,
-    local_path: str,
     port: int = 22,
-    dry_run: bool = False,
-    verbose: bool = False,
 ) -> list[str]:
     """
-    Build rsync command argument list.
+    Build sftp command argument list (without batch script).
     """
-    # Base rsync flags:
-    # -a: archive mode (preserves permissions, timestamps, recursive, etc.)
-    # -v: verbose output
-    # -z: compress during transfer
-    cmd = ["rsync", "-avz"]
+    cmd = ["sftp", "-i", private_key, "-P", str(port)]
 
-    # SSH options: specify private key and port
-    ssh_opts = f"ssh -i {private_key} -p {port} -o StrictHostKeyChecking=accept-new"
-    cmd.extend(["-e", ssh_opts])
-
-    # Dry run mode
-    if dry_run:
-        cmd.append("--dry-run")
-
-    # Extra verbose output with progress
-    if verbose:
-        cmd.append("--progress")
-
-    # Remote path and local path
-    # Note: trailing / ensures we sync directory contents, not the directory itself
-    remote = f"{user}@{host}:{remote_path.rstrip('/')}/"
-    local = f"{local_path.rstrip('/')}/"
-    cmd.extend([remote, local])
+    # Add host/user destination
+    cmd.append(f"{user}@{host}")
 
     return cmd
 
 
-def run_sync(cmd: list[str]) -> int:
+def run_sync(
+    cmd: list[str],
+    batch_script: str,
+    dry_run: bool = False,
+) -> int:
     """
-    Execute rsync command, return exit code.
+    Execute sftp command with batch script via stdin, return exit code.
     """
     print(f"Running: {' '.join(cmd)}")
+    if dry_run:
+        print("Mode: dry-run (list only)")
+    print("-" * 60)
+    print("Batch script:")
+    print(batch_script)
     print("-" * 60)
 
     try:
         result = subprocess.run(
             cmd,
+            input=batch_script.encode("utf-8"),
             capture_output=False,  # Output directly to terminal
             check=False,
         )
@@ -72,23 +88,32 @@ def run_sync(cmd: list[str]) -> int:
         print("\nSync cancelled by user.")
         return 130
     except FileNotFoundError:
-        print("Error: 'rsync' command not found. Please install rsync first.")
+        print("Error: 'sftp' command not found.")
         return 127
+
+
+def ensure_local_dir_exists(local_path: str) -> None:
+    """
+    Create local directory if it doesn't exist.
+    """
+    if not os.path.exists(local_path):
+        print(f"Creating local directory: {local_path}")
+        os.makedirs(local_path, exist_ok=True)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sync remote SFTP directory to local using rsync.",
+        description="Sync remote SFTP directory to local using sftp command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic sync
   python sync.py -H example.com -u myuser -i ~/.ssh/id_rsa -r /remote/data -l /local/data
 
-  # Custom port + verbose + progress
-  python sync.py -H example.com -u myuser -i ~/.ssh/id_rsa -r /remote/data -l /local/data -p 2222 -v
+  # Custom port
+  python sync.py -H example.com -u myuser -i ~/.ssh/id_rsa -r /remote/data -l /local/data -P 2222
 
-  # Dry run (no actual download)
+  # Dry run (list only, no download)
   python sync.py -H example.com -u myuser -i ~/.ssh/id_rsa -r /remote/data -l /local/data -n
         """,
     )
@@ -104,29 +129,32 @@ Examples:
     parser.add_argument("--local-path", "-l", required=True, help="Local directory path")
 
     parser.add_argument(
-        "--port", "-p", type=int, default=22, help="SSH port (default: 22)"
+        "--port", "-P", type=int, default=22, help="SFTP port (default: 22)"
     )
     parser.add_argument(
-        "--dry-run", "-n", action="store_true", help="Dry run (no actual download)"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Verbose output with progress"
+        "--dry-run", "-n", action="store_true", help="Dry run (list only, no download)"
     )
 
     args = parser.parse_args()
 
-    cmd = build_rsync_command(
+    # Ensure local directory exists
+    if not args.dry_run:
+        ensure_local_dir_exists(args.local_path)
+
+    # Build batch script and command
+    batch_script = build_sftp_batch_script(
+        remote_path=args.remote_path,
+        local_path=args.local_path,
+        dry_run=args.dry_run,
+    )
+    cmd = build_sftp_command(
         host=args.host,
         user=args.user,
         private_key=args.private_key,
-        remote_path=args.remote_path,
-        local_path=args.local_path,
         port=args.port,
-        dry_run=args.dry_run,
-        verbose=args.verbose,
     )
 
-    exit_code = run_sync(cmd)
+    exit_code = run_sync(cmd, batch_script, dry_run=args.dry_run)
     sys.exit(exit_code)
 
 

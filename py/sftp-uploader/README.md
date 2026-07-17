@@ -1,23 +1,23 @@
 # SFTP Uploader - Directory Sync Tool
 
-使用 rsync 通过 SSH/SFTP 协议将远程目录同步到本地。支持从多个远程源同步到同一本地目录。
+Use the `sftp` command to recursively download remote directories to local. Supports merging from multiple remote sources.
 
 ## Features
 
-- **增量同步**：只下载变化或新增的文件，节省带宽和时间
-- **非破坏性**：不会删除本地文件（无 --delete），适合多源合并场景
-- **私钥认证**：支持 SSH 私钥认证
-- **试运行模式**：先看会发生什么再实际执行
-- **进度显示**：可选详细输出和进度条
+- **Full recursive download**: Downloads all files every time (no incremental sync)
+- **Non-destructive**: Won't delete local files, suitable for multi-source merge
+- **Private key authentication**: SSH private key support
+- **Dry run mode**: List remote files without downloading
+- **Auto-create local directory**: Creates target directory if it doesn't exist
 
 ## Prerequisites
 
-- Linux/macOS/WSL2（需要 `rsync` 和 `ssh` 命令）
+- Linux/macOS/WSL2 (requires `sftp` command)
 - Python 3.7+
 
 ## Quick Start
 
-### 从单个远程源同步
+### Sync from single remote source
 
 ```bash
 cd py/sftp-uploader
@@ -30,17 +30,17 @@ python sync.py \
   --local-path /local/data
 ```
 
-### 从两个远程源同步到同一本地目录
+### Sync from two remote sources to same local directory
 
 ```bash
-# 源 1
+# Source 1
 python sync.py -H host1.example.com -u user1 -i ~/.ssh/id_rsa -r /data1 -l /local/merged
 
-# 源 2（不会删除源 1 的文件）
+# Source 2 (won't delete files from source 1)
 python sync.py -H host2.example.com -u user2 -i ~/.ssh/id_rsa -r /data2 -l /local/merged
 ```
 
-### 试运行（不实际下载）
+### Dry run (list only, no download)
 
 ```bash
 python sync.py \
@@ -52,7 +52,7 @@ python sync.py \
   --dry-run
 ```
 
-### 详细输出 + 进度条 + 自定义端口
+### Custom port
 
 ```bash
 python sync.py \
@@ -61,37 +61,37 @@ python sync.py \
   -i ~/.ssh/id_rsa \
   -r /remote/data \
   -l /local/data \
-  -p 2222 \
-  --verbose
+  -P 2222
 ```
 
 ## All Options
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
-| `--host` | `-H` | ✅ | - | SFTP 服务器主机名或 IP |
-| `--user` | `-u` | ✅ | - | 用户名 |
-| `--private-key` | `-i` | ✅ | - | 私钥文件路径 |
-| `--remote-path` | `-r` | ✅ | - | 远程目录路径 |
-| `--local-path` | `-l` | ✅ | - | 本地目录路径 |
-| `--port` | `-p` | ❌ | `22` | SSH 端口 |
-| `--dry-run` | `-n` | ❌ | `false` | 试运行，不实际下载 |
-| `--verbose` | `-v` | ❌ | `false` | 详细输出 + 进度条 |
+| `--host` | `-H` | ✅ | - | SFTP server hostname or IP |
+| `--user` | `-u` | ✅ | - | Username |
+| `--private-key` | `-i` | ✅ | - | Path to private key file |
+| `--remote-path` | `-r` | ✅ | - | Remote directory path |
+| `--local-path` | `-l` | ✅ | - | Local directory path |
+| `--port` | `-P` | ❌ | `22` | SFTP port |
+| `--dry-run` | `-n` | ❌ | `false` | Dry run (list only, no download) |
 
 ## How It Works
 
-底层使用 `rsync` 命令，参数为：
-```bash
-rsync -avz -e "ssh -i /path/to/key -p 22" user@host:/remote/path/ /local/path/
-```
+Under the hood, this script runs:
 
-- `-a`: Archive 模式（递归 + 保留权限、时间戳、符号链接等）
-- `-v`: 详细输出
-- `-z`: 传输时压缩数据
+```bash
+sftp -i /path/to/key -P 22 user@host <<EOF
+cd /remote/path
+lcd /local/path
+get -r .
+quit
+EOF
+```
 
 ## Cron 定期运行示例
 
-每小时同步一次：
+Hourly sync:
 
 ```bash
 # crontab -e
