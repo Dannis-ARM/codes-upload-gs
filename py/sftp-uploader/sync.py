@@ -7,12 +7,14 @@ Features:
 - No local file deletion, suitable for multi-source merge
 - Private key authentication
 - Dry run mode (list only)
+- Secure against injection via temporary batch file
 """
 
 import subprocess
 import argparse
 import sys
 import os
+import tempfile
 
 
 def build_sftp_batch_script(
@@ -23,36 +25,33 @@ def build_sftp_batch_script(
     """
     Build sftp batch script content.
     """
-    lines = []
-
-    # Change to remote directory
-    lines.append(f"cd {remote_path}")
-
-    # Change to local directory
-    lines.append(f"lcd {local_path}")
-
     if dry_run:
-        # Dry run: just list files
-        lines.append("ls -la")
+        return f"""\
+cd {remote_path}
+lcd {local_path}
+ls -la
+quit
+"""
     else:
-        # Recursive get all files
-        lines.append("get -r .")
-
-    lines.append("quit")
-
-    return "\n".join(lines)
+        return f"""\
+cd {remote_path}
+lcd {local_path}
+get -r .
+quit
+"""
 
 
 def build_sftp_command(
     host: str,
     user: str,
     private_key: str,
+    batch_file: str,
     port: int = 22,
 ) -> list[str]:
     """
-    Build sftp command argument list (without batch script).
+    Build sftp command argument list with batch file.
     """
-    cmd = ["sftp", "-i", private_key, "-P", str(port)]
+    cmd = ["sftp", "-i", private_key, "-P", str(port), "-b", batch_file]
 
     # Add host/user destination
     cmd.append(f"{user}@{host}")
@@ -66,7 +65,7 @@ def run_sync(
     dry_run: bool = False,
 ) -> int:
     """
-    Execute sftp command with batch script via stdin, return exit code.
+    Execute sftp command, return exit code.
     """
     print(f"Running: {' '.join(cmd)}")
     if dry_run:
@@ -79,7 +78,6 @@ def run_sync(
     try:
         result = subprocess.run(
             cmd,
-            input=batch_script.encode("utf-8"),
             capture_output=False,  # Output directly to terminal
             check=False,
         )
@@ -141,21 +139,36 @@ Examples:
     if not args.dry_run:
         ensure_local_dir_exists(args.local_path)
 
-    # Build batch script and command
+    # Build batch script
     batch_script = build_sftp_batch_script(
         remote_path=args.remote_path,
         local_path=args.local_path,
         dry_run=args.dry_run,
     )
-    cmd = build_sftp_command(
-        host=args.host,
-        user=args.user,
-        private_key=args.private_key,
-        port=args.port,
-    )
 
-    exit_code = run_sync(cmd, batch_script, dry_run=args.dry_run)
-    sys.exit(exit_code)
+    # Create temporary batch file (safer than stdin)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(batch_script)
+        batch_file = f.name
+
+    try:
+        # Build and run sftp command
+        cmd = build_sftp_command(
+            host=args.host,
+            user=args.user,
+            private_key=args.private_key,
+            batch_file=batch_file,
+            port=args.port,
+        )
+
+        exit_code = run_sync(cmd, batch_script, dry_run=args.dry_run)
+        sys.exit(exit_code)
+    finally:
+        # Clean up temporary file
+        try:
+            os.unlink(batch_file)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
